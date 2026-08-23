@@ -13,6 +13,7 @@ import {
 } from "../../../../contracts";
 import { pool } from "../db/index";
 import { runMigrations } from "../db/migrate";
+import { sanitizeEvidenceImage } from "../evidence-image";
 import { PostgresOutbox } from "../outbox";
 import { buildApp } from "../server";
 import * as store from "../store";
@@ -37,6 +38,17 @@ const notificationStore = createNotificationStore(
 function requireInviteCode(detail: Awaited<ReturnType<typeof store.getJarDetail>>): InviteCode {
   if (!detail?.inviteCode) throw new Error("open jar invite missing");
   return detail.inviteCode;
+}
+
+function previewJar(token: string, code: string) {
+  return buildApp().request("/api/jars/preview", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ code }),
+  });
 }
 
 beforeAll(async () => {
@@ -396,13 +408,7 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
         ["Must Roll Back", "AAAAAA"],
       );
       expect(persisted.rows[0]?.count).toBe("0");
-      expect(
-        (
-          await buildApp().request("/api/jars/code/AAAAAA", {
-            headers: { Authorization: `Bearer ${joinerToken}` },
-          })
-        ).status,
-      ).toBe(404);
+      expect((await previewJar(joinerToken, "AAAAAA")).status).toBe(404);
       expect(
         (
           await buildApp().request("/api/jars/join", {
@@ -453,11 +459,11 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     if (!detail) throw new Error("created jar detail missing");
     const code = requireInviteCode(detail);
 
-    const preview = await store.getJarPreviewByCode(code);
+    const joiner = await store.createUser({ name: "Grace" });
+    const preview = await store.getJarPreviewByCode(code, joiner.id);
     expect(preview?.members).toEqual([expect.objectContaining({ id: owner.id, name: "Frank" })]);
     expect(preview?.members[0]).not.toHaveProperty("exes");
 
-    const joiner = await store.createUser({ name: "Grace" });
     const result = await store.joinJarByCode(joiner.id, code);
     expect(result).not.toBeNull();
     expect(result?.jarId).toBe(jar.id);
@@ -502,9 +508,7 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     expect(rotated.inviteExpiresAt).toBeLessThanOrEqual(Date.now() + 7 * 86_400_000);
 
     for (const token of [ownerToken, memberToken, formerToken, outsiderToken]) {
-      const oldPreview = await buildApp().request(`/api/jars/code/${originalCode}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const oldPreview = await previewJar(token, originalCode);
       expect(oldPreview.status).toBe(404);
       const oldJoin = await buildApp().request("/api/jars/join", {
         method: "POST",
@@ -515,13 +519,7 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     }
 
     const newCode = requireInviteCode(rotated);
-    expect(
-      (
-        await buildApp().request(`/api/jars/code/${newCode}`, {
-          headers: { Authorization: `Bearer ${outsiderToken}` },
-        })
-      ).status,
-    ).toBe(200);
+    expect((await previewJar(outsiderToken, newCode)).status).toBe(200);
     expect(
       (
         await buildApp().request("/api/jars/join", {
@@ -536,9 +534,7 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     ).toBe(200);
 
     await pool.query("UPDATE jars SET invite_expires_at=$1 WHERE id=$2", [Date.now() - 1, jar.id]);
-    const expiredPreview = await buildApp().request(`/api/jars/code/${newCode}`, {
-      headers: { Authorization: `Bearer ${ownerToken}` },
-    });
+    const expiredPreview = await previewJar(ownerToken, newCode);
     expect(expiredPreview.status).toBe(404);
     const expiredJoin = await buildApp().request("/api/jars/join", {
       method: "POST",
@@ -667,7 +663,7 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
       }),
     );
     expect(reloaded?.members).toHaveLength(2);
-    expect(await store.getJarPreviewByCode(openDetail.inviteCode)).toBeNull();
+    expect(await store.getJarPreviewByCode(openDetail.inviteCode, owner.id)).toBeNull();
     expect(
       await store.joinJarByCode(
         (await store.createUser({ name: "Late Joiner" })).id,
@@ -787,7 +783,7 @@ describe.skipIf(!HAS_DB)("jar lifecycle", () => {
     expect(await store.listJarsForUser(member.id)).toHaveLength(0);
     expect(await store.activityForUser(member.id)).toEqual([]);
     expect(await store.pendingReportsForUser(member.id)).toEqual([]);
-    expect(await store.getJarPreviewByCode(code)).toMatchObject({
+    expect(await store.getJarPreviewByCode(code, member.id)).toMatchObject({
       memberCount: 1,
       members: [expect.objectContaining({ id: owner.id })],
     });
@@ -943,11 +939,11 @@ describe.skipIf(!HAS_DB)("reports", () => {
       anonymous: false,
       amountCents: 500,
       evidence: [
-        {
+        sanitizeEvidenceImage({
           mimeType: "image/png",
           dataUrl:
             "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-        },
+        }),
       ],
     });
     expect(report.status).toBe("pending");
@@ -968,6 +964,76 @@ describe.skipIf(!HAS_DB)("reports", () => {
 
     const jars = await store.listJarsForUser(accused.id);
     expect(jars.find((j) => j.id === jar.id)?.myTallyCents).toBe(500);
+  });
+
+  it("rejects malformed evidence atomically before creating a report", async () => {
+    const accuser = await store.createUser({ name: "Safe Evidence Reporter" });
+    const accused = await store.createUser({ name: "Safe Evidence Accused" });
+    const jar = await store.createJar({ userId: accuser.id, name: "Safe Evidence Jar" });
+    await store.joinJarByCode(
+      accused.id,
+      requireInviteCode(await store.getJarDetail(jar.id, accuser.id)),
+    );
+    const token = await store.createSession(accuser.id);
+
+    const response = await buildApp().request(`/api/jars/${jar.id}/reports`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        accusedId: accused.id,
+        evidence: [
+          {
+            mimeType: "image/png",
+            dataUrl:
+              "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+          },
+          { mimeType: "image/png", dataUrl: "data:image/png;base64,iVBORw0KGgo=" },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "invalid_request" });
+    for (const table of ["reports", "report_evidence"] as const) {
+      const persisted = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM ${table}`,
+      );
+      expect(persisted.rows[0]?.count, table).toBe("0");
+    }
+  });
+
+  it("omits unsafe legacy evidence instead of rendering its original bytes", async () => {
+    const accuser = await store.createUser({ name: "Legacy Evidence Reporter" });
+    const accused = await store.createUser({ name: "Legacy Evidence Accused" });
+    const jar = await store.createJar({ userId: accuser.id, name: "Legacy Evidence Jar" });
+    await store.joinJarByCode(
+      accused.id,
+      requireInviteCode(await store.getJarDetail(jar.id, accuser.id)),
+    );
+    const report = await store.createReport({
+      jarId: jar.id,
+      accuserId: accuser.id,
+      accusedId: accused.id,
+      note: "legacy attachment",
+      anonymous: false,
+      amountCents: 500,
+      evidence: [
+        sanitizeEvidenceImage({
+          mimeType: "image/png",
+          dataUrl:
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        }),
+      ],
+    });
+    await pool.query("UPDATE report_evidence SET payload=$1 WHERE report_id=$2", [
+      JSON.stringify({ mimeType: "image/jpeg", dataUrl: "data:image/jpeg;base64,/9j/AA==" }),
+      report.id,
+    ]);
+
+    await expect(store.reportForUser(report.id, accused.id)).resolves.toMatchObject({
+      id: report.id,
+      evidence: [],
+    });
   });
 
   it("rolls back a failed authenticated report creation without partial evidence", async () => {
@@ -1286,11 +1352,11 @@ describe.skipIf(!HAS_DB)("reports", () => {
       anonymous: true,
       amountCents: 500,
       evidence: [
-        {
+        sanitizeEvidenceImage({
           mimeType: "image/png",
           dataUrl:
             "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-        },
+        }),
       ],
     });
     expect(await store.reportForUser(owned.id, member.id)).toMatchObject({ status: "pending" });
@@ -1430,15 +1496,18 @@ describe.skipIf(!HAS_DB)("authorization matrix", () => {
       former: await store.createSession(former.id),
       outsider: await store.createSession(outsider.id),
     } as const;
-    const request = (actor: Actor, path: string, method = "GET", body?: unknown) =>
-      buildApp().request(`/api${path}`, {
-        method,
+    const request = (actor: Actor, path: string, method = "GET", body?: unknown) => {
+      const previewCode = /^\/jars\/code\/(.+)$/.exec(path)?.[1];
+      const requestBody = previewCode === undefined ? body : { code: previewCode };
+      return buildApp().request(previewCode === undefined ? `/api${path}` : "/api/jars/preview", {
+        method: previewCode === undefined ? method : "POST",
         headers: {
           Authorization: `Bearer ${tokens[actor]}`,
-          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+          ...(requestBody === undefined ? {} : { "Content-Type": "application/json" }),
         },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: requestBody === undefined ? undefined : JSON.stringify(requestBody),
       });
+    };
     const expectStatuses = async (
       path: string,
       expected: Readonly<Record<Actor, number>>,
@@ -1749,15 +1818,18 @@ describe.skipIf(!HAS_DB)("activity", () => {
       owner: await store.createSession(owner.id),
       member: await store.createSession(member.id),
     } as const;
-    const request = (token: string, path: string, method = "GET", body?: unknown) =>
-      buildApp().request(path, {
-        method,
+    const request = (token: string, path: string, method = "GET", body?: unknown) => {
+      const previewCode = /^\/api\/jars\/code\/(.+)$/.exec(path)?.[1];
+      const requestBody = previewCode === undefined ? body : { code: previewCode };
+      return buildApp().request(previewCode === undefined ? path : "/api/jars/preview", {
+        method: previewCode === undefined ? method : "POST",
         headers: {
           Authorization: `Bearer ${token}`,
-          ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+          ...(requestBody === undefined ? {} : { "Content-Type": "application/json" }),
         },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: requestBody === undefined ? undefined : JSON.stringify(requestBody),
       });
+    };
     const expectPrivateLabelsAbsent = async (response: Response, context: string) => {
       expect(response.status, context).toBe(200);
       const raw = await response.text();

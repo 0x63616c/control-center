@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { apiPort, appleBundleId, resetEnvCache, shouldResetDatabase } from "../env";
+import {
+  apiPort,
+  appleBundleId,
+  moderationNarrativeKeyringSource,
+  resetEnvCache,
+  shouldResetDatabase,
+} from "../env";
 
 const originalEnv = { ...process.env };
 
@@ -35,5 +41,29 @@ describe("Don’t Text Your Ex API configuration", () => {
     process.env.APP_ENV = "production";
     resetEnvCache();
     expect(shouldResetDatabase()).toBe(false);
+  });
+
+  it("reads the moderation narrative keyring from the configured secret file", () => {
+    process.env.APP_ENV = "production";
+    process.env.MODERATION_NARRATIVE_KEYRING_FILE = new URL(
+      "./fixtures/moderation-keyring.json",
+      import.meta.url,
+    ).pathname;
+    resetEnvCache();
+
+    expect(moderationNarrativeKeyringSource()).toEqual({
+      activeKeyId: "test-v1",
+      keys: { "test-v1": "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=" },
+    });
+  });
+
+  it("fails closed when the production moderation narrative keyring is unavailable", () => {
+    process.env.APP_ENV = "production";
+    process.env.MODERATION_NARRATIVE_KEYRING_FILE = "/definitely/missing/moderation-keyring";
+    resetEnvCache();
+
+    expect(() => moderationNarrativeKeyringSource()).toThrow(
+      "MODERATION_NARRATIVE_KEYRING_FILE must contain valid JSON",
+    );
   });
 });

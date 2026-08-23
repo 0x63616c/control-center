@@ -6,7 +6,11 @@
   "main": "program.ts",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "worker:check": "bun run --cwd workers/dont-text-your-ex-edge check",
+    "worker:deploy": "bun run --cwd workers/dont-text-your-ex-edge deploy",
+    "worker:upload:pass-through": "bun run --cwd workers/dont-text-your-ex-edge upload:pass-through",
+    "worker:deploy:pass-through": "bun run --cwd workers/dont-text-your-ex-edge deploy:pass-through"
   },
   "dependencies": {
     "@www/platform": "workspace:*",

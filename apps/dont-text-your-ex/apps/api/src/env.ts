@@ -16,6 +16,10 @@ const ENV = defineEnv({
   TEMPORAL_ADDRESS: str().optional(),
   PUSH_TOKEN_KEYRING_FILE: str().default("/run/secrets/PUSH_TOKEN_KEYRING"),
   PUSH_TOKEN_KEYRING: str().optional(),
+  MODERATION_NARRATIVE_KEYRING_FILE: str().default(
+    "/run/moderation-secrets/MODERATION_NARRATIVE_KEYRING",
+  ),
+  MODERATION_NARRATIVE_KEYRING: str().optional(),
   TYE_RESET: str().optional(),
 });
 
@@ -51,6 +55,23 @@ export function pushTokenKeyringSource(): unknown {
     throw new Error("Don't Text Your Ex: PUSH_TOKEN_KEYRING_FILE must contain valid JSON", {
       cause: error,
     });
+  }
+}
+
+export function moderationNarrativeKeyringSource(): unknown {
+  try {
+    return JSON.parse(
+      ENV.MODERATION_NARRATIVE_KEYRING ??
+        readFileSync(ENV.MODERATION_NARRATIVE_KEYRING_FILE, "utf-8"),
+    );
+  } catch (error) {
+    if (ENV.APP_ENV !== "production") {
+      return { activeKeyId: "local", keys: { local: Buffer.alloc(32, 11).toString("base64") } };
+    }
+    throw new Error(
+      "Don't Text Your Ex: MODERATION_NARRATIVE_KEYRING_FILE must contain valid JSON",
+      { cause: error },
+    );
   }
 }
 

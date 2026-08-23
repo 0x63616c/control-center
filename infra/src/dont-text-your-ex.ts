@@ -1,7 +1,11 @@
 import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
 import { DEFAULT_METRICS_PORT } from "@www/platform/metrics/port";
-import type { InfraNamespaceName } from "./cluster.ts";
+import {
+  CLOUDFLARE_NAMESPACE,
+  CLOUDFLARED_WORKLOAD_NAME,
+  type InfraNamespaceName,
+} from "./cluster.ts";
 import type { CronJobSpec, WorkloadSpec } from "./component.ts";
 import { ScheduledJob, Workload } from "./component.ts";
 import { GHCR_PULL_SECRET_NAME } from "./ghcr-pull-secrets.ts";
@@ -14,7 +18,9 @@ import {
 export const DONT_TEXT_YOUR_EX_NAMESPACE = "dont-text-your-ex" as const;
 export const DONT_TEXT_YOUR_EX_HOSTNAME = "dont-text-your-ex.worldwidewebb.co";
 export const DONT_TEXT_YOUR_EX_API_PORT = 8787;
+export const DONT_TEXT_YOUR_EX_API_WORKLOAD_NAME = "api";
 export const DONT_TEXT_YOUR_EX_NOTIFICATION_SECRET_NAME = "dont-text-your-ex-notification-secrets";
+export const DONT_TEXT_YOUR_EX_MODERATION_SECRET_NAME = "dont-text-your-ex-moderation-secrets";
 const DONT_TEXT_YOUR_EX_FRONTEND_PORT = 80;
 
 export const DONT_TEXT_YOUR_EX_DATABASE = {
@@ -76,7 +82,7 @@ export function dontTextYourExSpecs(
     },
     {
       logicalName: "dont-text-your-ex-api",
-      name: "api",
+      name: DONT_TEXT_YOUR_EX_API_WORKLOAD_NAME,
       namespaceName: DONT_TEXT_YOUR_EX_NAMESPACE,
       image: image("api", imageDigests),
       replicas: 1,
@@ -95,6 +101,7 @@ export function dontTextYourExSpecs(
         APPLE_BUNDLE_ID: "co.worldwidewebb.textyourex",
         TEMPORAL_ADDRESS: TEMPORAL_FRONTEND_CLUSTER_ADDRESS,
         PUSH_TOKEN_KEYRING_FILE: "/run/notification-secrets/PUSH_TOKEN_KEYRING",
+        MODERATION_NARRATIVE_KEYRING_FILE: "/run/moderation-secrets/MODERATION_NARRATIVE_KEYRING",
       },
       extraSecretMounts: [
         {
@@ -106,6 +113,16 @@ export function dontTextYourExSpecs(
           secretName: DONT_TEXT_YOUR_EX_NOTIFICATION_SECRET_NAME,
           mountPath: "/run/notification-secrets",
           items: [{ key: "PUSH_TOKEN_KEYRING", path: "PUSH_TOKEN_KEYRING" }],
+        },
+        {
+          secretName: DONT_TEXT_YOUR_EX_MODERATION_SECRET_NAME,
+          mountPath: "/run/moderation-secrets",
+          items: [
+            {
+              key: "MODERATION_NARRATIVE_KEYRING",
+              path: "MODERATION_NARRATIVE_KEYRING",
+            },
+          ],
         },
       ],
       imagePullSecrets: [GHCR_PULL_SECRET_NAME],
@@ -202,6 +219,31 @@ export interface DontTextYourExArgs {
   vault: Record<string, string>;
 }
 
+export function dontTextYourExApiIngressPolicyArgs(
+  namespace: pulumi.Input<string> = DONT_TEXT_YOUR_EX_NAMESPACE,
+) {
+  return {
+    metadata: { name: "api-ingress-from-cloudflared", namespace },
+    spec: {
+      podSelector: { matchLabels: { app: DONT_TEXT_YOUR_EX_API_WORKLOAD_NAME } },
+      policyTypes: ["Ingress" as const],
+      ingress: [
+        {
+          from: [
+            {
+              namespaceSelector: {
+                matchLabels: { "kubernetes.io/metadata.name": CLOUDFLARE_NAMESPACE },
+              },
+              podSelector: { matchLabels: { app: CLOUDFLARED_WORKLOAD_NAME } },
+            },
+          ],
+          ports: [{ port: DONT_TEXT_YOUR_EX_API_PORT, protocol: "TCP" as const }],
+        },
+      ],
+    },
+  };
+}
+
 const NOTIFICATION_VAULT_KEYS = {
   APNS_KEY_ID: "APNS_AUTH_KEY__KEY_ID",
   APNS_TEAM_ID: "APNS_AUTH_KEY__TEAM_ID",
@@ -219,6 +261,16 @@ function notificationSecretData(vault: Record<string, string>) {
       return [name, pulumi.secret(value)];
     }),
   );
+}
+
+function moderationSecretData(vault: Record<string, string>) {
+  const value = vault.DTYE_MODERATION_NARRATIVE_KEYRING;
+  if (value === undefined) {
+    throw new Error(
+      'vault key "DTYE_MODERATION_NARRATIVE_KEYRING" not found (needed by DTYE moderation)',
+    );
+  }
+  return { MODERATION_NARRATIVE_KEYRING: pulumi.secret(value) };
 }
 
 export function dontTextYourExTemporalNamespaceSetupCommand(): string {
@@ -302,6 +354,14 @@ export function installDontTextYourEx(args: DontTextYourExArgs) {
     },
     { provider },
   );
+  const moderationSecret = new k8s.core.v1.Secret(
+    DONT_TEXT_YOUR_EX_MODERATION_SECRET_NAME,
+    {
+      metadata: { name: DONT_TEXT_YOUR_EX_MODERATION_SECRET_NAME, namespace },
+      stringData: moderationSecretData(vault),
+    },
+    { provider },
+  );
 
   const workloads = specs.workloads.map(
     ({ namespaceName: _namespaceName, ...spec }) =>
@@ -313,15 +373,28 @@ export function installDontTextYourEx(args: DontTextYourExArgs) {
             spec.name === "temporal-worker"
               ? [cluster, temporalNamespaceJob, notificationSecret]
               : spec.name === "api"
-                ? [cluster, notificationSecret]
+                ? [cluster, notificationSecret, moderationSecret]
                 : undefined,
         },
       ),
+  );
+  const apiIngressPolicy = new k8s.networking.v1.NetworkPolicy(
+    "dont-text-your-ex-api-ingress",
+    dontTextYourExApiIngressPolicyArgs(namespace),
+    { provider },
   );
   const { namespaceName: _namespaceName, ...backupSpec } = specs.backup;
   const backup = new ScheduledJob(
     { ...backupSpec, provider, namespace },
     { provider, dependsOn: [cluster] },
   );
-  return { cluster, temporalNamespaceJob, notificationSecret, workloads, backup };
+  return {
+    cluster,
+    temporalNamespaceJob,
+    notificationSecret,
+    moderationSecret,
+    workloads,
+    backup,
+    apiIngressPolicy,
+  };
 }

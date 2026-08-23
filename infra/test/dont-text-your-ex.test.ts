@@ -1,14 +1,19 @@
 import { describe, expect, test } from "vitest";
+import { CLOUDFLARE_NAMESPACE, CLOUDFLARED_WORKLOAD_NAME } from "../src/cluster.ts";
 import { renderWorkload } from "../src/component.ts";
 import {
   DONT_TEXT_YOUR_EX_API_PORT,
+  DONT_TEXT_YOUR_EX_API_WORKLOAD_NAME,
   DONT_TEXT_YOUR_EX_DATABASE,
   DONT_TEXT_YOUR_EX_HOSTNAME,
+  DONT_TEXT_YOUR_EX_MODERATION_SECRET_NAME,
   DONT_TEXT_YOUR_EX_NAMESPACE,
   DONT_TEXT_YOUR_EX_NOTIFICATION_SECRET_NAME,
+  dontTextYourExApiIngressPolicyArgs,
   dontTextYourExSpecs,
   dontTextYourExTemporalNamespaceSetupCommand,
 } from "../src/dont-text-your-ex.ts";
+import { serviceSpecs } from "../src/services.ts";
 
 const VALID = `sha256:${"a".repeat(64)}`;
 const ALL_DIGESTS = {
@@ -52,6 +57,7 @@ describe("Don't Text Your Ex production resources", () => {
         POSTGRES_HOST: "dont-text-your-ex-postgres-rw",
         POSTGRES_PASSWORD_FILE: "/run/secrets/POSTGRES_PASSWORD",
         POSTGRES_USER: "dont_text_your_ex",
+        MODERATION_NARRATIVE_KEYRING_FILE: "/run/moderation-secrets/MODERATION_NARRATIVE_KEYRING",
         TEMPORAL_ADDRESS: "temporal-server.temporal.svc.cluster.local:7233",
       },
       extraSecretMounts: [
@@ -64,6 +70,16 @@ describe("Don't Text Your Ex production resources", () => {
           secretName: DONT_TEXT_YOUR_EX_NOTIFICATION_SECRET_NAME,
           mountPath: "/run/notification-secrets",
           items: [{ key: "PUSH_TOKEN_KEYRING", path: "PUSH_TOKEN_KEYRING" }],
+        },
+        {
+          secretName: DONT_TEXT_YOUR_EX_MODERATION_SECRET_NAME,
+          mountPath: "/run/moderation-secrets",
+          items: [
+            {
+              key: "MODERATION_NARRATIVE_KEYRING",
+              path: "MODERATION_NARRATIVE_KEYRING",
+            },
+          ],
         },
       ],
     });
@@ -97,10 +113,64 @@ describe("Don't Text Your Ex production resources", () => {
     });
     if (!api) throw new Error("missing api workload");
     const rendered = renderWorkload(api);
+    expect(rendered.deployment.spec.template.metadata.labels).toEqual({
+      app: DONT_TEXT_YOUR_EX_API_WORKLOAD_NAME,
+    });
+    expect(rendered.services).toHaveLength(1);
+    expect(rendered.services[0]).toMatchObject({
+      metadata: { name: DONT_TEXT_YOUR_EX_API_WORKLOAD_NAME },
+      spec: {
+        type: "ClusterIP",
+        selector: { app: DONT_TEXT_YOUR_EX_API_WORKLOAD_NAME },
+        ports: [{ port: DONT_TEXT_YOUR_EX_API_PORT, targetPort: DONT_TEXT_YOUR_EX_API_PORT }],
+      },
+    });
     const container = rendered.deployment.spec.template.spec.containers[0];
     expect(container.startupProbe?.httpGet).toEqual({ path: "/api/health", port: 8787 });
     expect(container.readinessProbe?.httpGet).toEqual({ path: "/api/health", port: 8787 });
     expect(container.livenessProbe?.httpGet).toEqual({ path: "/api/health", port: 8787 });
+  });
+
+  test("allows API ingress only from the cloudflared workload", () => {
+    const cloudflared = serviceSpecs({
+      cloudflaredReplicas: 2,
+      nasNfsServer: "192.168.0.218",
+    }).find((workload) => workload.logicalName === "cloudflare-cloudflared");
+    expect(cloudflared).toMatchObject({
+      name: CLOUDFLARED_WORKLOAD_NAME,
+      namespaceName: CLOUDFLARE_NAMESPACE,
+    });
+    if (!cloudflared) throw new Error("missing cloudflared workload");
+    expect(renderWorkload(cloudflared).deployment.spec.template.metadata.labels).toEqual({
+      app: CLOUDFLARED_WORKLOAD_NAME,
+    });
+
+    const policy = dontTextYourExApiIngressPolicyArgs();
+    expect(policy.metadata).toEqual({
+      name: "api-ingress-from-cloudflared",
+      namespace: DONT_TEXT_YOUR_EX_NAMESPACE,
+    });
+    expect(policy.spec).toEqual({
+      podSelector: { matchLabels: { app: DONT_TEXT_YOUR_EX_API_WORKLOAD_NAME } },
+      policyTypes: ["Ingress"],
+      ingress: [
+        {
+          from: [
+            {
+              namespaceSelector: {
+                matchLabels: { "kubernetes.io/metadata.name": CLOUDFLARE_NAMESPACE },
+              },
+              podSelector: { matchLabels: { app: CLOUDFLARED_WORKLOAD_NAME } },
+            },
+          ],
+          ports: [{ port: DONT_TEXT_YOUR_EX_API_PORT, protocol: "TCP" }],
+        },
+      ],
+    });
+
+    const peer = policy.spec.ingress?.[0]?.from?.[0];
+    expect(peer && "ipBlock" in peer).toBe(false);
+    expect("egress" in policy.spec).toBe(false);
   });
 
   test("registers its Temporal namespace with 90-day retention", () => {

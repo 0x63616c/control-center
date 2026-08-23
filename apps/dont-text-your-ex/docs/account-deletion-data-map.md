@@ -51,6 +51,7 @@ continues even when Apple is unavailable.
 | `slips` | user/reporter IDs, note, ex label, source, amount/time | erase IDs, note, label, and reporter contribution or delete row per approved shared-history decision | amount/time may remain only as unlinkable jar-local numeric history if approved |
 | `reports` | accuser/accused IDs, anonymous linkage, note, status, amount | pending becomes expired internally with `account_deleted`; erase/delete IDs and note; terminal row outcome follows approved shared-history decision | terminal numeric outcome only if approved and unlinkable |
 | `report_evidence` | uploaded image payload | delete whenever the user is accuser, accused, or evidence author | none |
+| `abuse_report` and `abuse_report_audit_event` | reporter/target IDs, encrypted authored narrative, gameplay references, moderation state/audit | delete the entire report and audit when the user is reporter or target; the P01 decision has no legal-retention exception | none |
 | `activity` | actor/target/report IDs, generated or authored text, amount, ex label, note | delete linked report activity; erase IDs and all authored/private text; exact numeric row outcome follows approved decision | system/numeric jar history only if unlinkable |
 | `jar_milestones` | jar-local threshold and time | no user field; delete if jar is deleted | retain with retained jar |
 | `rescue_interventions` | user ID and private intervention state/times | suppress notification, terminate workflow, delete row | none |

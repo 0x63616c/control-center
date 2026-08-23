@@ -6,7 +6,12 @@ import {
   useRef,
   useState,
 } from "react";
-import { AVATAR_MAX_BYTES, AvatarPhotoDataUrlSchema } from "../../../../contracts";
+import {
+  AVATAR_EMOJIS,
+  AVATAR_MAX_BYTES,
+  type AvatarEmoji,
+  AvatarPhotoDataUrlSchema,
+} from "../../../../contracts";
 import { Icon } from "../icons";
 import { formatPoints, T } from "../theme";
 import type { ActivityDTO } from "../types";
@@ -185,8 +190,12 @@ export function ActivityRow({ a, showJar }: { a: ActivityDTO; showJar?: boolean 
 export interface AvatarDraft {
   name: string;
   color: string;
-  emoji: string | null;
+  emoji: AvatarEmoji | null;
   photo: string | null;
+}
+
+export function avatarEmoji(value: string | null | undefined): AvatarEmoji | null {
+  return AVATAR_EMOJIS.find((candidate) => candidate === value) ?? null;
 }
 const AV_COLORS = [
   "#FF375F",
@@ -198,7 +207,7 @@ const AV_COLORS = [
   "#FF6482",
   "#64D2FF",
 ];
-const AV_EMOJI = ["-", "🫠", "💔", "🥲", "😈", "🦝", "🍷", "👀"];
+const AV_EMOJI = ["-", ...AVATAR_EMOJIS] as const;
 
 export function AvatarEditor({
   draft,

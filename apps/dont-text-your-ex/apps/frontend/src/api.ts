@@ -151,8 +151,7 @@ export const api = {
   rotateInvite: (id: JarId) =>
     req(JarDetailSchema, "POST", `/jars/${id}/invite/rotate`, { confirmed: true }),
   leaveJar: (id: JarId) => req(OkResponseSchema, "POST", `/jars/${id}/leave`, { confirmed: true }),
-  jarByCode: (code: string) =>
-    req(JarPreviewSchema, "GET", `/jars/code/${encodeURIComponent(code)}`),
+  jarByCode: (code: string) => req(JarPreviewSchema, "POST", "/jars/preview", { code }),
   joinJar: (code: string) => req(JoinJarResponseSchema, "POST", "/jars/join", { code }),
   setShareStreak: (jarId: JarId, value: boolean) =>
     req(OkResponseSchema, "POST", `/jars/${jarId}/share-streak`, { value }),

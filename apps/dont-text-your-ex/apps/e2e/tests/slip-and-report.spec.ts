@@ -1,5 +1,28 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { memberRow, openJar, signInAsCalum } from "./helpers";
+
+async function transcodeInBrowser(page: Page, png: Buffer, mimeType: string): Promise<Buffer> {
+  const bytes = await page.evaluate(
+    async ({ dataUrl, mimeType: outputType }) => {
+      const image = new Image();
+      image.src = dataUrl;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      canvas.getContext("2d")?.drawImage(image, 0, 0);
+      const blob = await new Promise<Blob>((resolve, reject) =>
+        canvas.toBlob(
+          (result) => (result ? resolve(result) : reject(new Error("fixture encode failed"))),
+          outputType,
+        ),
+      );
+      return Array.from(new Uint8Array(await blob.arrayBuffer()));
+    },
+    { dataUrl: `data:image/png;base64,${png.toString("base64")}`, mimeType },
+  );
+  return Buffer.from(bytes);
+}
 
 // Each test starts from the seeded baseline (non-prod reset seam) so
 // absolute assertions on seeded values stay order-independent.
@@ -72,6 +95,10 @@ test("accountability check enforces note-or-image, malicious boundaries, and thr
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
     "base64",
   );
+  const [jpeg, webp] = await Promise.all([
+    transcodeInBrowser(page, png, "image/jpeg"),
+    transcodeInBrowser(page, png, "image/webp"),
+  ]);
   await page.getByTestId("evidence-input").setInputFiles(
     Array.from({ length: 4 }, (_, index) => ({
       name: `too-many-${index}.png`,
@@ -93,12 +120,8 @@ test("accountability check enforces note-or-image, malicious boundaries, and thr
 
   await page.getByTestId("evidence-input").setInputFiles([
     { name: "receipt.png", mimeType: "image/png", buffer: png },
-    { name: "receipt.jpg", mimeType: "image/jpeg", buffer: Buffer.from([255, 216, 255, 0]) },
-    {
-      name: "receipt.webp",
-      mimeType: "image/webp",
-      buffer: Buffer.from("RIFF\u0000\u0000\u0000\u0000WEBP"),
-    },
+    { name: "receipt.jpg", mimeType: "image/jpeg", buffer: jpeg },
+    { name: "receipt.webp", mimeType: "image/webp", buffer: webp },
   ]);
   await expect(page.getByRole("img", { name: "Accountability check attachment" })).toHaveCount(3);
   await expect(page.getByRole("alert")).toHaveCount(0);

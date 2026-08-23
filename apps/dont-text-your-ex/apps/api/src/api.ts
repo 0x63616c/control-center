@@ -5,10 +5,10 @@ import {
   AppleAuthRequestSchema,
   AuthDevRequestSchema,
   CloseJarRequestSchema,
+  CreateAbuseReportRequestSchema,
   CreateJarRequestSchema,
   CreateReportRequestSchema,
   DisablePushDeviceRequestSchema,
-  InviteCodeSchema,
   JarIdSchema,
   JoinJarRequestSchema,
   LeaveJarRequestSchema,
@@ -16,6 +16,7 @@ import {
   NotificationIdSchema,
   NotificationPreferencesSchema,
   NotificationTargetSchema,
+  PreviewJarRequestSchema,
   PushRegistrationResponseSchema,
   RegisterPushDeviceRequestSchema,
   ReportIdSchema,
@@ -30,12 +31,16 @@ import {
   UpdateNotificationPreferencesRequestSchema,
   UpdateTimeZoneRequestSchema,
   type UserId,
+  UserIdSchema,
 } from "../../../contracts";
 import { completeAppleAccountSignIn, verifyAppleIdentityToken } from "./apple-auth";
 import { requireUser } from "./auth";
 import { errorDetails, parseRequestJson, parseRequestValue } from "./boundary";
+import { type ContentSafetyReason, evaluateTextContent } from "./content-safety";
 import { appleBundleId, isProduction } from "./env";
+import { type SanitizedEvidenceImage, sanitizeEvidenceImage } from "./evidence-image";
 import { id } from "./ids";
+import { ModerationAuthorizationError, moderationStore } from "./moderation";
 import { notificationStore } from "./notifications";
 import { rescueStore } from "./rescue";
 import { resetAndSeed } from "./seed";
@@ -53,6 +58,20 @@ const notFound = { error: "not_found" } as const;
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled state: ${JSON.stringify(value)}`);
+}
+
+function rejectedContentReason(
+  values: readonly (string | null | undefined)[],
+): ContentSafetyReason | null {
+  for (const value of values) {
+    // Some legacy optional fields deliberately use an empty string as "not
+    // configured". Whitespace/control-only submissions are still evaluated
+    // and rejected.
+    if (value == null || value === "") continue;
+    const result = evaluateTextContent(value);
+    if (!result.allowed) return result.reason;
+  }
+  return null;
 }
 
 // ─────────────────────────── health ───────────────────────────
@@ -96,6 +115,10 @@ api.post("/auth/apple", async (c) => {
   const parsed = await parseRequestJson(c, AppleAuthRequestSchema);
   if (!parsed.ok) return parsed.response;
   const { identityToken, nonce, fullName } = parsed.value;
+  const rejectedReason = rejectedContentReason([fullName]);
+  if (rejectedReason) {
+    return c.json({ error: "content_not_allowed" as const, reason: rejectedReason }, 400);
+  }
 
   // Decode diagnostic metadata before verification, but never log the stable
   // Apple subject or token. The most common failure is an `aud` mismatch.
@@ -167,6 +190,10 @@ api.patch("/me", async (c) => {
   const parsed = await parseRequestJson(c, UpdateMeRequestSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value;
+  const rejectedReason = rejectedContentReason([body.name, ...(body.exes ?? [])]);
+  if (rejectedReason) {
+    return c.json({ error: "content_not_allowed" as const, reason: rejectedReason }, 400);
+  }
   if (
     body.name !== undefined ||
     body.color !== undefined ||
@@ -191,6 +218,30 @@ api.patch("/me/timezone", async (c) => {
   if (!parsed.ok) return parsed.response;
   await store.updateUserTimeZone(uid, parsed.value.timezone);
   return c.json({ ok: true });
+});
+
+api.get("/me/blocks", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  return c.json(await store.listBlockedUsers(uid));
+});
+
+api.put("/me/blocks/:userId", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsed = parseRequestValue(c, UserIdSchema, c.req.param("userId"));
+  if (!parsed.ok) return parsed.response;
+  await store.blockUser(uid, parsed.value);
+  return c.json({ ok: true } as const);
+});
+
+api.delete("/me/blocks/:userId", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsed = parseRequestValue(c, UserIdSchema, c.req.param("userId"));
+  if (!parsed.ok) return parsed.response;
+  await store.unblockUser(uid, parsed.value);
+  return c.json({ ok: true } as const);
 });
 
 api.get("/me/notification-preferences", async (c) => {
@@ -292,15 +343,19 @@ api.post("/jars", async (c) => {
   if (!uid) return c.json(unauth, 401);
   const parsed = await parseRequestJson(c, CreateJarRequestSchema);
   if (!parsed.ok) return parsed.response;
+  const rejectedReason = rejectedContentReason([parsed.value.name, parsed.value.rule]);
+  if (rejectedReason) {
+    return c.json({ error: "content_not_allowed" as const, reason: rejectedReason }, 400);
+  }
   return c.json(await store.createJar({ userId: uid, ...parsed.value }));
 });
 
-api.get("/jars/code/:code", async (c) => {
+api.post("/jars/preview", async (c) => {
   const uid = requireUser(c);
   if (!uid) return c.json(unauth, 401);
-  const parsed = parseRequestValue(c, InviteCodeSchema, c.req.param("code"));
+  const parsed = await parseRequestJson(c, PreviewJarRequestSchema);
   if (!parsed.ok) return parsed.response;
-  const preview = await store.getJarPreviewByCode(parsed.value);
+  const preview = await store.getJarPreviewByCode(parsed.value.code, uid);
   if (!preview) return c.json({ error: "not_found" }, 404);
   return c.json(preview);
 });
@@ -359,7 +414,13 @@ api.post("/jars/:id/invite/rotate", async (c) => {
   if (!parsedId.ok) return parsedId.response;
   const parsed = await parseRequestJson(c, RotateInviteRequestSchema);
   if (!parsed.ok) return parsed.response;
-  const result = await store.rotateInvite(parsedId.value, uid);
+  let result: Awaited<ReturnType<typeof store.rotateInvite>>;
+  try {
+    result = await store.rotateInvite(parsedId.value, uid);
+  } catch (error) {
+    if (error instanceof store.BlockedInteractionError) return c.json(notFound, 404);
+    throw error;
+  }
   const rotateStatus = result.status;
   switch (rotateStatus) {
     case "not_found":
@@ -416,6 +477,7 @@ api.post("/jars/:id/share-streak", async (c) => {
     await store.setShareStreak(jarId, uid, parsed.value.value);
   } catch (error) {
     if (error instanceof store.JarClosedError) return c.json(jarClosed, 409);
+    if (error instanceof store.BlockedInteractionError) return c.json(notFound, 404);
     throw error;
   }
   return c.json({ ok: true });
@@ -431,10 +493,15 @@ api.post("/jars/:id/slips", async (c) => {
   if (!(await store.isMember(jarId, uid))) return c.json(notFound, 404);
   const parsed = await parseRequestJson(c, LogSlipRequestSchema);
   if (!parsed.ok) return parsed.response;
+  const rejectedReason = rejectedContentReason([parsed.value.note, parsed.value.exLabel]);
+  if (rejectedReason) {
+    return c.json({ error: "content_not_allowed" as const, reason: rejectedReason }, 400);
+  }
   try {
     await store.logSlip({ jarId, userId: uid, ...parsed.value, source: "self" });
   } catch (error) {
     if (error instanceof store.JarClosedError) return c.json(jarClosed, 409);
+    if (error instanceof store.BlockedInteractionError) return c.json(notFound, 404);
     throw error;
   }
   return c.json(await store.getJarDetail(jarId, uid));
@@ -451,11 +518,21 @@ api.post("/jars/:id/reports", async (c) => {
   const parsed = await parseRequestJson(c, CreateReportRequestSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value;
+  const rejectedReason = rejectedContentReason([body.note]);
+  if (rejectedReason) {
+    return c.json({ error: "content_not_allowed" as const, reason: rejectedReason }, 400);
+  }
   if (body.accusedId === uid) return c.json({ error: "cannot_report_self" as const }, 400);
   if (!(await store.isMember(jarId, body.accusedId))) return c.json({ error: "bad_target" }, 400);
   const detail = await store.getJarDetail(jarId, uid);
   if (!detail) return c.json({ error: "jar_not_found" }, 404);
   const amount = body.amountCents ?? detail.defaultCents;
+  let evidence: SanitizedEvidenceImage[];
+  try {
+    evidence = (body.evidence ?? []).map(sanitizeEvidenceImage);
+  } catch {
+    return c.json({ error: "invalid_request" }, 400);
+  }
   let report: Awaited<ReturnType<typeof store.createReport>>;
   try {
     report = await store.createReport({
@@ -465,13 +542,36 @@ api.post("/jars/:id/reports", async (c) => {
       note: body.note ?? null,
       anonymous: !!body.anonymous,
       amountCents: amount,
-      evidence: body.evidence ?? [],
+      evidence,
     });
   } catch (error) {
     if (error instanceof store.JarClosedError) return c.json(jarClosed, 409);
+    if (error instanceof store.BlockedInteractionError) return c.json(notFound, 404);
     throw error;
   }
   return c.json(report);
+});
+
+// Abuse reports are a private moderation aggregate, distinct from gameplay
+// accountability reports. Only submission has a public route.
+api.post("/moderation/reports", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsed = await parseRequestJson(c, CreateAbuseReportRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const rejectedReason = rejectedContentReason([parsed.value.narrative]);
+  if (rejectedReason) {
+    return c.json({ error: "content_not_allowed" as const, reason: rejectedReason }, 400);
+  }
+  if (parsed.value.targetUserId === uid) return c.json({ error: "cannot_report_self" }, 400);
+  try {
+    return c.json(await moderationStore().submit(uid, parsed.value), 202);
+  } catch (error) {
+    if (error instanceof ModerationAuthorizationError) {
+      return c.json({ error: "not_found_or_forbidden" }, 404);
+    }
+    throw error;
+  }
 });
 
 api.get("/reports/pending", async (c) => {

@@ -1,0 +1,129 @@
+import { describe, expect, it } from "vitest";
+import { createModerationNarrativeCipher, parseModerationNarrativeKeyring } from "../moderation";
+import { executeModerationAdminCommand, type ModerationAdminStore } from "../moderation-admin";
+
+function fakeStore(): ModerationAdminStore {
+  return {
+    listQueue: async () => [],
+    show: async () => {
+      throw new Error("unexpected show");
+    },
+    transition: async () => {
+      throw new Error("unexpected transition");
+    },
+  };
+}
+
+describe("moderation operator narrative access", () => {
+  it("opens a versioned AES-GCM narrative only with the report ID AAD", () => {
+    const cipher = createModerationNarrativeCipher(
+      parseModerationNarrativeKeyring({
+        activeKeyId: "test-v2",
+        keys: { "test-v2": Buffer.alloc(32, 73).toString("base64") },
+      }),
+    );
+    const sealed = cipher.seal("private operator evidence", "abr_report_a");
+
+    expect(cipher.open(sealed, "abr_report_a")).toBe("private operator evidence");
+    expect(() => cipher.open(sealed, "abr_report_b")).toThrow();
+  });
+
+  it("requires an explicit production acknowledgement before every command", async () => {
+    await expect(
+      executeModerationAdminCommand({
+        argv: ["list"],
+        productionRuntime: true,
+        store: fakeStore(),
+      }),
+    ).rejects.toMatchObject({ code: "production_acknowledgement_required" });
+  });
+
+  it("refuses to run outside the production pod runtime", async () => {
+    await expect(
+      executeModerationAdminCommand({
+        argv: ["--acknowledge-production", "list"],
+        productionRuntime: false,
+        store: fakeStore(),
+      }),
+    ).rejects.toMatchObject({ code: "private_production_runtime_required" });
+  });
+
+  it("returns a machine-readable queue without narratives", async () => {
+    const store = fakeStore();
+    store.listQueue = async () => [
+      {
+        reportId: "abr_queue",
+        targetUserId: "usr_target",
+        status: "submitted",
+        hasNarrative: true,
+        referencedJarId: null,
+        referencedGameplayReportId: null,
+        createdAt: 10,
+        updatedAt: 10,
+      },
+    ];
+
+    const output = await executeModerationAdminCommand({
+      argv: ["list", "--acknowledge-production"],
+      productionRuntime: true,
+      store,
+    });
+
+    expect(output).toEqual({ ok: true, command: "list", reports: await store.listQueue() });
+    expect(JSON.stringify(output)).not.toContain("private operator evidence");
+    expect(JSON.stringify(output)).not.toContain('narrative"');
+  });
+
+  it("decrypts one report only for an explicit show command", async () => {
+    const store = fakeStore();
+    const reportId = `abr_${"c".repeat(32)}`;
+    store.show = async (requestedId) => ({
+      reportId: requestedId,
+      reporterUserId: "usr_reporter",
+      targetUserId: "usr_target",
+      status: "reviewing",
+      narrative: "explicitly requested narrative",
+      referencedJarId: null,
+      referencedGameplayReportId: null,
+      createdAt: 1,
+      updatedAt: 2,
+      auditEvents: [],
+    });
+
+    await expect(
+      executeModerationAdminCommand({
+        argv: ["show", reportId, "--acknowledge-production"],
+        productionRuntime: true,
+        store,
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      command: "show",
+      report: await store.show(reportId),
+    });
+  });
+
+  it("returns a machine-readable idempotent transition receipt", async () => {
+    const store = fakeStore();
+    const reportId = `abr_${"d".repeat(32)}`;
+    store.transition = async (requestedId, status) => ({
+      reportId: requestedId,
+      status,
+      changed: false,
+    });
+
+    await expect(
+      executeModerationAdminCommand({
+        argv: ["transition", reportId, "resolved", "--acknowledge-production"],
+        productionRuntime: true,
+        store,
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      command: "transition",
+      reportId,
+      status: "resolved",
+      changed: false,
+    });
+  });
+});

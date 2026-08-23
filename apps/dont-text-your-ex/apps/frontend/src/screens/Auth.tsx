@@ -3,14 +3,14 @@ import { api } from "../api";
 import type { AppCtx, RouteFor } from "../appctx";
 import { T } from "../theme";
 import { Btn, Screen, TopBar } from "../ui";
-import { type AvatarDraft, AvatarEditor } from "./common";
+import { type AvatarDraft, AvatarEditor, avatarEmoji } from "./common";
 
 // ─────────────────────── New-user profile setup ───────────────────────
 export function SetupProfile({ ctx }: { ctx: AppCtx<RouteFor<"setup">> }) {
   const [draft, setDraft] = useState<AvatarDraft>({
     name: ctx.me?.name ?? "",
     color: ctx.me?.color ?? "#5E5CE6",
-    emoji: ctx.me?.emoji ?? null,
+    emoji: avatarEmoji(ctx.me?.emoji),
     photo: ctx.me?.photo ?? null,
   });
   const [busy, setBusy] = useState(false);
@@ -79,7 +79,7 @@ export function EditProfile({ ctx }: { ctx: AppCtx<RouteFor<"editProfile">> }) {
   const [draft, setDraft] = useState<AvatarDraft>({
     name: cur?.name ?? "",
     color: cur?.color ?? "#5E5CE6",
-    emoji: cur?.emoji ?? null,
+    emoji: avatarEmoji(cur?.emoji),
     photo: cur?.photo ?? null,
   });
   const [busy, setBusy] = useState(false);

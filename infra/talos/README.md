@@ -206,6 +206,22 @@ scripts/secrets.sh scripts/test-talos-config.sh
 (cd infra/talos && ../../scripts/secrets.sh talhelper genconfig)
 ```
 
+### Flannel NetworkPolicy enforcement
+
+`talconfig.yaml` explicitly enables Talos 1.13's
+`cluster.network.cni.flannel.kubeNetworkPoliciesEnabled` switch. Kubernetes
+will accept `NetworkPolicy` objects even when the CNI is not enforcing them,
+so the existence of an object alone is not proof of isolation.
+
+For an existing cluster, applying the machine configuration is only the first
+step. Talos' bootstrap manifests must then be synchronized so that the
+network-policy controller is deployed. Treat this as a cluster networking
+change: render and validate first, take a current cluster-health snapshot,
+apply only during an approved maintenance window, synchronize the bootstrap
+manifests, and prove both an allowed cloudflared request and a denied request
+from an unrelated pod. Do not claim the Don't Text Your Ex policy is enforced
+until both live probes have been recorded.
+
 Never commit a plaintext `talsecret.yaml` / `talsecret.yml`. The rendered
 output under `clusterconfig/` (which embeds the decrypted secrets in plain
 YAML) is gitignored for the same reason.

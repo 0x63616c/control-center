@@ -153,7 +153,12 @@ export const ImageOnlySubmission: Story = {
       note: undefined,
       anonymous: false,
       amountCents: jar.defaultCents,
-      evidence: [{ mimeType: "image/png", dataUrl: `data:image/png;base64,${payload}` }],
+      evidence: [
+        expect.objectContaining({
+          mimeType: "image/png",
+          dataUrl: expect.stringMatching(/^data:image\/png;base64,/),
+        }),
+      ],
     });
   },
 };

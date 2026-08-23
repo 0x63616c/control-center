@@ -1,10 +1,12 @@
-import { type EvidenceImageInput, EvidenceImageInputSchema } from "../../../contracts";
+import { EvidenceImageInputSchema } from "../../../contracts";
+import { type SanitizedEvidenceImage, sanitizeEvidenceImage } from "./evidence-image";
 
-export function serializeEvidenceImageJson(value: unknown): string {
-  return JSON.stringify(EvidenceImageInputSchema.parse(value));
+export function serializeEvidenceImageJson(value: SanitizedEvidenceImage): string {
+  const sanitized = sanitizeEvidenceImage(value);
+  return JSON.stringify({ mimeType: sanitized.mimeType, dataUrl: sanitized.dataUrl });
 }
 
-export function parseEvidenceImageJson(value: string): EvidenceImageInput {
+export function parseEvidenceImageJson(value: string): SanitizedEvidenceImage {
   let raw: unknown;
   try {
     raw = JSON.parse(value);
@@ -13,5 +15,9 @@ export function parseEvidenceImageJson(value: string): EvidenceImageInput {
   }
   const parsed = EvidenceImageInputSchema.safeParse(raw);
   if (!parsed.success) throw new Error("invalid persisted report evidence");
-  return parsed.data;
+  try {
+    return sanitizeEvidenceImage(parsed.data);
+  } catch {
+    throw new Error("invalid persisted report evidence");
+  }
 }

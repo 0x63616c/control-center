@@ -32,6 +32,7 @@ import {
   type UserId,
   UserIdSchema,
 } from "../../../../contracts";
+import { sanitizeEvidenceImage } from "../evidence-image";
 import { parseEvidenceImageJson, serializeEvidenceImageJson } from "../persistence";
 import type * as store from "../store";
 
@@ -40,9 +41,44 @@ const PNG_DATA_URL =
 const JPEG_DATA_URL = "data:image/jpeg;base64,/9j/AA==";
 const WEBP_DATA_URL = "data:image/webp;base64,UklGRgAAAABXRUJQ";
 
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function validPngAtEncodedLimit(): string {
+  const source = Buffer.from(PNG_DATA_URL.split(",")[1] ?? "", "base64");
+  const payload = Buffer.alloc(EVIDENCE_MAX_BYTES - source.length - 12);
+  payload[0] = 0x78;
+  const type = Buffer.from("tEXt");
+  const chunk = Buffer.alloc(payload.length + 12);
+  chunk.writeUInt32BE(payload.length, 0);
+  type.copy(chunk, 4);
+  payload.copy(chunk, 8);
+  chunk.writeUInt32BE(crc32(Buffer.concat([type, payload])), chunk.length - 4);
+  return `data:image/png;base64,${Buffer.concat([
+    source.subarray(0, -12),
+    chunk,
+    source.subarray(-12),
+  ]).toString("base64")}`;
+}
+
 describe("request schemas", () => {
   it("exposes expired as a terminal report status", () => {
     expect(ReportStatusSchema.parse("expired")).toBe("expired");
+  });
+
+  it("accepts only the product avatar picker values instead of arbitrary rendered text", () => {
+    expect(UpdateMeRequestSchema.parse({ emoji: "🫠" })).toEqual({ emoji: "🫠" });
+    expect(UpdateMeRequestSchema.parse({ emoji: null })).toEqual({ emoji: null });
+    expect(UpdateMeRequestSchema.safeParse({ emoji: "nigger" }).success).toBe(false);
+    expect(UpdateMeRequestSchema.safeParse({ emoji: "arbitrary text" }).success).toBe(false);
   });
 
   it("keeps report workflow arguments opaque and exact", () => {
@@ -144,6 +180,23 @@ describe("request schemas", () => {
     expect(LeaveJarRequestSchema.parse({ confirmed: true })).toEqual({ confirmed: true });
     expect(LeaveJarRequestSchema.safeParse({}).success).toBe(false);
   });
+
+  it.each([
+    ["profile name", UpdateMeRequestSchema, { name: "x".repeat(81) }],
+    ["profile ex count", UpdateMeRequestSchema, { exes: Array(21).fill("Former partner") }],
+    ["profile ex label", UpdateMeRequestSchema, { exes: ["x".repeat(101)] }],
+    ["jar name", CreateJarRequestSchema, { name: "x".repeat(81) }],
+    ["jar rule", CreateJarRequestSchema, { name: "Jar", rule: "x".repeat(501) }],
+    ["slip note", LogSlipRequestSchema, { amountCents: 500, note: "x".repeat(2_001) }],
+    ["slip ex label", LogSlipRequestSchema, { amountCents: 500, exLabel: "x".repeat(101) }],
+    [
+      "gameplay report note",
+      CreateReportRequestSchema,
+      { accusedId: "usr_target", note: "x".repeat(2_001) },
+    ],
+  ])("bounds user-authored %s text before persistence", (_name, schema, raw) => {
+    expect(schema.safeParse(raw).success).toBe(false);
+  });
 });
 
 describe("avatar photo boundary", () => {
@@ -175,6 +228,10 @@ describe("avatar photo boundary", () => {
 });
 
 describe("domain id parsers", () => {
+  it("bounds branded identifiers before they reach persistence", () => {
+    expect(UserIdSchema.safeParse(`usr_${"x".repeat(10_000)}`).success).toBe(false);
+  });
+
   it("keeps six-character invite codes on a cryptographic uniform source", () => {
     const source = readFileSync(new URL("../ids.ts", import.meta.url), "utf8");
 
@@ -205,14 +262,18 @@ describe("domain id parsers", () => {
 });
 
 describe("persisted report evidence", () => {
-  it("accepts PNG, JPEG, and WebP signatures and requires a note or image", () => {
-    for (const [mimeType, dataUrl] of [
-      ["image/png", PNG_DATA_URL],
-      ["image/jpeg", JPEG_DATA_URL],
-      ["image/webp", WEBP_DATA_URL],
-    ] as const) {
-      expect(EvidenceImageInputSchema.safeParse({ mimeType, dataUrl }).success).toBe(true);
-    }
+  it("accepts only normalized PNG uploads and requires a note or image", () => {
+    expect(
+      EvidenceImageInputSchema.safeParse({ mimeType: "image/png", dataUrl: PNG_DATA_URL }).success,
+    ).toBe(true);
+    expect(
+      EvidenceImageInputSchema.safeParse({ mimeType: "image/jpeg", dataUrl: JPEG_DATA_URL })
+        .success,
+    ).toBe(false);
+    expect(
+      EvidenceImageInputSchema.safeParse({ mimeType: "image/webp", dataUrl: WEBP_DATA_URL })
+        .success,
+    ).toBe(false);
     expect(
       CreateReportRequestSchema.safeParse({ accusedId: "usr_123", anonymous: false }).success,
     ).toBe(false);
@@ -274,14 +335,10 @@ describe("persisted report evidence", () => {
   });
 
   it("accepts exactly three attachments and exactly 2 MiB per image", () => {
-    const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-    const exactLimit = `data:image/png;base64,${Buffer.concat([
-      pngSignature,
-      Buffer.alloc(EVIDENCE_MAX_BYTES - pngSignature.length),
-    ]).toString("base64")}`;
-    const image = { mimeType: "image/png" as const, dataUrl: exactLimit };
+    const image = { mimeType: "image/png" as const, dataUrl: validPngAtEncodedLimit() };
 
     expect(EvidenceImageInputSchema.safeParse(image).success).toBe(true);
+    expect(() => sanitizeEvidenceImage(image)).not.toThrow();
     expect(
       CreateReportRequestSchema.safeParse({
         accusedId: "usr_123",
@@ -291,11 +348,19 @@ describe("persisted report evidence", () => {
   });
 
   it("parses valid persisted image JSON and rejects corrupt persisted JSON", () => {
-    const image = { mimeType: "image/png" as const, dataUrl: PNG_DATA_URL };
+    const image = sanitizeEvidenceImage({ mimeType: "image/png", dataUrl: PNG_DATA_URL });
 
     expect(parseEvidenceImageJson(serializeEvidenceImageJson(image))).toEqual(image);
     expect(() => parseEvidenceImageJson('{"mimeType":"image/png","dataUrl":"nope"}')).toThrow(
       "invalid persisted report evidence",
     );
+    expect(() =>
+      parseEvidenceImageJson(JSON.stringify({ mimeType: "image/jpeg", dataUrl: JPEG_DATA_URL })),
+    ).toThrow("invalid persisted report evidence");
+    expect(() =>
+      parseEvidenceImageJson(
+        JSON.stringify({ mimeType: "image/png", dataUrl: "data:image/png;base64,iVBORw0KGgo=" }),
+      ),
+    ).toThrow("invalid persisted report evidence");
   });
 });

@@ -1,0 +1,8 @@
+{
+  "$schema": "../../../../node_modules/wrangler/config-schema.json",
+  "name": "dont-text-your-ex-edge",
+  "main": "src/pass-through.ts",
+  "compatibility_date": "2026-08-23",
+  "workers_dev": false,
+  "preview_urls": false
+}

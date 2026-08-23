@@ -16,7 +16,8 @@
     "packages/*",
     "infra",
     "infra/unifi",
-    "infra/cloudflare"
+    "infra/cloudflare",
+    "infra/cloudflare/workers/*"
   ],
   "scripts": {
     "dev": "tilt up",
