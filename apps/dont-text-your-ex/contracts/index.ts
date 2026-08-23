@@ -468,7 +468,6 @@ export const DeleteAccountResponseSchema = z
     deletionRequestId: AccountDeletionIdSchema,
   })
   .strict();
-export type DeleteAccountResponse = z.infer<typeof DeleteAccountResponseSchema>;
 export const OkResponseSchema = z.object({ ok: z.literal(true) }).strict();
 export const JoinJarResponseSchema = z.object({ jarId: JarIdSchema }).strict();
 export const InviteRateLimitErrorSchema = z

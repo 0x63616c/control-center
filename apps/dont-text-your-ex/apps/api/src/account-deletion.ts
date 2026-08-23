@@ -25,7 +25,7 @@ export type AccountDeletionKeyring = Readonly<{
   activeKeyId: string;
   keys: Readonly<Record<string, Buffer>>;
 }>;
-export type SealedAccountDeletionCredential = Readonly<{
+type SealedAccountDeletionCredential = Readonly<{
   keyId: string;
   nonce: string;
   ciphertext: string;
@@ -79,7 +79,7 @@ export function createAccountDeletionCipher(
   };
 }
 
-export type AccountDeletionState =
+type AccountDeletionState =
   | "accepted"
   | "erasing"
   | "locally_erased"
@@ -169,7 +169,7 @@ function refreshTokenContext(deletionRequestId: AccountDeletionId): string {
 
 export { accountMutationLockKey } from "../../../contracts";
 
-export class AccountDeletionUserNotFoundError extends Error {
+class AccountDeletionUserNotFoundError extends Error {
   constructor() {
     super("account deletion user not found");
   }
