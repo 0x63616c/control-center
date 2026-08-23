@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   apiPort,
   appleBundleId,
+  isKubernetesRuntime,
   moderationNarrativeKeyringSource,
   resetEnvCache,
   shouldResetDatabase,
@@ -41,6 +42,16 @@ describe("Don’t Text Your Ex API configuration", () => {
     process.env.APP_ENV = "production";
     resetEnvCache();
     expect(shouldResetDatabase()).toBe(false);
+  });
+
+  it("identifies the Kubernetes runtime through the centralized environment registry", () => {
+    delete process.env.KUBERNETES_SERVICE_HOST;
+    resetEnvCache();
+    expect(isKubernetesRuntime()).toBe(false);
+
+    process.env.KUBERNETES_SERVICE_HOST = "10.96.0.1";
+    resetEnvCache();
+    expect(isKubernetesRuntime()).toBe(true);
   });
 
   it("reads the moderation narrative keyring from the configured secret file", () => {

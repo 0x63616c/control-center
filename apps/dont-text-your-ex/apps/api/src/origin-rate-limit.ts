@@ -1,17 +1,15 @@
 import { isIP } from "node:net";
 import type { Context, Next } from "hono";
+import {
+  RATE_LIMIT_CLASS,
+  type RateLimitClass,
+  rateLimitClasses,
+} from "../../../contracts/rate-limit-policy";
 import type { Env } from "./api";
 
-export const ORIGIN_RATE_LIMIT_CLASS = {
-  General: "general",
-  Auth: "auth",
-  Invite: "invite",
-  ReportEvidence: "reportEvidence",
-  Mutation: "mutation",
-} as const;
+export const ORIGIN_RATE_LIMIT_CLASS = RATE_LIMIT_CLASS;
 
-export type OriginRateLimitClass =
-  (typeof ORIGIN_RATE_LIMIT_CLASS)[keyof typeof ORIGIN_RATE_LIMIT_CLASS];
+export type OriginRateLimitClass = RateLimitClass;
 
 export type OriginRateLimitResponse =
   | Readonly<{
@@ -44,27 +42,6 @@ function trustedClientSource(context: Context<Env>): string | null {
 
 function clientSource(context: Context<Env>): string {
   return trustedClientSource(context) ?? UNKNOWN_CLIENT;
-}
-
-const STATE_CHANGING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
-
-function specificRouteClass(context: Context<Env>): OriginRateLimitClass | null {
-  const path = context.req.path;
-  if (path.startsWith("/api/auth/")) return ORIGIN_RATE_LIMIT_CLASS.Auth;
-  if (path === "/api/jars/join" || path === "/api/jars/preview") {
-    return ORIGIN_RATE_LIMIT_CLASS.Invite;
-  }
-  if (
-    STATE_CHANGING_METHODS.has(context.req.method) &&
-    (/^\/api\/jars\/[^/]+\/reports$/.test(path) ||
-      path === "/api/moderation/reports" ||
-      path.startsWith("/api/moderation/reports/") ||
-      path.startsWith("/api/reports/") ||
-      (context.req.method === "PATCH" && path === "/api/me"))
-  ) {
-    return ORIGIN_RATE_LIMIT_CLASS.ReportEvidence;
-  }
-  return STATE_CHANGING_METHODS.has(context.req.method) ? ORIGIN_RATE_LIMIT_CLASS.Mutation : null;
 }
 
 export type OriginRateLimiter = {
@@ -100,8 +77,7 @@ export function createOriginRateLimiter(input: {
       }
       nextSweepAt = checkedAt + sweepIntervalMs;
     }
-    const specific = specificRouteClass(context);
-    const routeClasses = [...(specific ? [specific] : []), ORIGIN_RATE_LIMIT_CLASS.General];
+    const routeClasses = rateLimitClasses(context.req.method, context.req.path);
     const current = routeClasses.map((routeClass) => {
       const budget = input.limits[routeClass];
       const refillPerMs = budget.capacity / budget.windowMs;

@@ -1205,6 +1205,7 @@ export async function resolveReport(
   const resolved = await withTransaction(async (db, emit) => {
     const r = await reportRow(reportId, db, true);
     if (!r || r.accused_id !== userId || r.status !== "pending") return false;
+    await lockUsers(db, [r.accuser_id, r.accused_id]);
     if (await hasBlockBetween(db, r.accuser_id, r.accused_id)) return false;
     await assertJarOpen(r.jar_id, db, true);
     if (!(await isMemberIn(db, r.jar_id, userId, true))) return false;

@@ -283,6 +283,80 @@ describe.skipIf(!HAS_DB).sequential("block API persistence and enforcement", () 
     }
   });
 
+  it("serializes report denial behind an uncommitted block without changing the report", async () => {
+    const accuser = await store.createUser({ name: "Resolution Race Accuser" });
+    const accused = await store.createUser({ name: "Resolution Race Accused" });
+    const jar = await store.createJar({ userId: accuser.id, name: "Resolution Race Jar" });
+    const detail = await store.getJarDetail(jar.id, accuser.id);
+    if (!detail?.inviteCode) throw new Error("resolution race jar invite missing");
+    await store.joinJarByCode(accused.id, detail.inviteCode);
+    const report = await store.createReport({
+      jarId: jar.id,
+      accuserId: accuser.id,
+      accusedId: accused.id,
+      note: "must remain pending after block wins",
+      anonymous: false,
+      amountCents: 500,
+      evidence: [],
+    });
+    const activityBefore = await pool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM activity WHERE report_id=$1",
+      [report.id],
+    );
+    const eventsBefore = await pool.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM domain_event WHERE aggregate_id=$1",
+      [report.id],
+    );
+
+    const block = await pool.connect();
+    try {
+      await block.query("BEGIN");
+      await block.query("SELECT id FROM users WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE", [
+        [accuser.id, accused.id],
+      ]);
+      await block.query(
+        "INSERT INTO user_block (blocker_user_id,blocked_user_id,created_at) VALUES ($1,$2,$3)",
+        [accuser.id, accused.id, Date.now()],
+      );
+
+      const resolution = store.resolveReport(report.id, accused.id, "deny");
+      expect(
+        await Promise.race([
+          resolution.then(
+            () => "settled",
+            () => "settled",
+          ),
+          new Promise((resolve) => setTimeout(() => resolve("pending"), 50)),
+        ]),
+      ).toBe("pending");
+
+      await block.query("COMMIT");
+      await expect(resolution).resolves.toBeNull();
+    } finally {
+      await block.query("ROLLBACK").catch(() => undefined);
+      block.release();
+    }
+
+    await expect(
+      pool.query<{ status: string; resolved_at: string | null }>(
+        "SELECT status,resolved_at FROM reports WHERE id=$1",
+        [report.id],
+      ),
+    ).resolves.toMatchObject({ rows: [{ status: "pending", resolved_at: null }] });
+    await expect(
+      pool.query<{ count: string }>(
+        "SELECT COUNT(*)::text AS count FROM activity WHERE report_id=$1",
+        [report.id],
+      ),
+    ).resolves.toMatchObject({ rows: activityBefore.rows });
+    await expect(
+      pool.query<{ count: string }>(
+        "SELECT COUNT(*)::text AS count FROM domain_event WHERE aggregate_id=$1",
+        [report.id],
+      ),
+    ).resolves.toMatchObject({ rows: eventsBefore.rows });
+  });
+
   it("cancels pending pair notifications and suppresses deliveries when a block is created", async () => {
     const alice = await store.createUser({ name: "Notification Alice" });
     const bob = await store.createUser({ name: "Notification Bob" });

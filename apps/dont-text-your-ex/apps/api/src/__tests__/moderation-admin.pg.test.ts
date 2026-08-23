@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { AbuseReportIdSchema } from "../../../../contracts";
 import { runMigrations } from "../db/migrate";
 import { createModerationNarrativeCipher, parseModerationNarrativeKeyring } from "../moderation";
 import { PostgresModerationAdminStore } from "../moderation-admin";
@@ -15,7 +16,7 @@ const cipher = createModerationNarrativeCipher(
   }),
 );
 const store = new PostgresModerationAdminStore(pool, cipher, () => 200);
-const REPORT_ID = `abr_${"a".repeat(32)}`;
+const REPORT_ID = AbuseReportIdSchema.parse(`abr_${"a".repeat(32)}`);
 const PRIVATE_NARRATIVE = "private narrative only explicit show may reveal";
 
 beforeAll(async () => {
@@ -30,21 +31,21 @@ beforeEach(async () => {
   const sealed = cipher.seal(PRIVATE_NARRATIVE, REPORT_ID);
   await pool.query(
     `INSERT INTO users (id,name,created_at) VALUES
-       ('usr_operator_reporter','Reporter',1),('usr_operator_target','Target',1);
+       ('usr_operatorreporter','Reporter',1),('usr_operatortarget','Target',1);
      INSERT INTO sessions (token,user_id,created_at,expires_at,last_used_at)
-       VALUES ('sess_operator_reporter','usr_operator_reporter',1,9999999999999,1)`,
+       VALUES ('sess_operatorreporter','usr_operatorreporter',1,9999999999999,1)`,
   );
   await pool.query(
     `INSERT INTO abuse_report
        (id,reporter_user_id,target_user_id,narrative_ciphertext,narrative_nonce,
         narrative_key_version,status,created_at,updated_at)
-       VALUES ($1,'usr_operator_reporter','usr_operator_target',$2,$3,$4,'submitted',10,10)`,
+       VALUES ($1,'usr_operatorreporter','usr_operatortarget',$2,$3,$4,'submitted',10,10)`,
     [REPORT_ID, sealed.ciphertext, sealed.nonce, sealed.keyVersion],
   );
   await pool.query(
     `INSERT INTO abuse_report_audit_event
        (id,abuse_report_id,event_type,actor_user_id,created_at)
-       VALUES ($1,$2,'submitted','usr_operator_reporter',10)`,
+       VALUES ($1,$2,'submitted','usr_operatorreporter',10)`,
     [`mae_${"b".repeat(32)}`, REPORT_ID],
   );
 });
@@ -59,7 +60,7 @@ describe.skipIf(!HAS_DB)("private moderation operator store", () => {
     expect(queue).toEqual([
       {
         reportId: REPORT_ID,
-        targetUserId: "usr_operator_target",
+        targetUserId: "usr_operatortarget",
         status: "submitted",
         hasNarrative: true,
         referencedJarId: null,
@@ -74,22 +75,22 @@ describe.skipIf(!HAS_DB)("private moderation operator store", () => {
     const shown = await store.show(REPORT_ID);
     expect(shown).toMatchObject({
       reportId: REPORT_ID,
-      reporterUserId: "usr_operator_reporter",
-      targetUserId: "usr_operator_target",
+      reporterUserId: "usr_operatorreporter",
+      targetUserId: "usr_operatortarget",
       status: "submitted",
       narrative: PRIVATE_NARRATIVE,
       auditEvents: [
         {
           eventType: "submitted",
           actorIdentity: null,
-          actorUserId: "usr_operator_reporter",
+          actorUserId: "usr_operatorreporter",
           createdAt: 10,
         },
       ],
     });
 
     const ordinaryUserRead = await buildApp().request(`/api/moderation/reports/${REPORT_ID}`, {
-      headers: { Authorization: "Bearer sess_operator_reporter" },
+      headers: { Authorization: "Bearer sess_operatorreporter" },
     });
     expect(ordinaryUserRead.status).toBe(404);
   });
@@ -125,7 +126,7 @@ describe.skipIf(!HAS_DB)("private moderation operator store", () => {
       {
         eventType: "submitted",
         actorIdentity: null,
-        actorUserId: "usr_operator_reporter",
+        actorUserId: "usr_operatorreporter",
         createdAt: 10,
       },
       {

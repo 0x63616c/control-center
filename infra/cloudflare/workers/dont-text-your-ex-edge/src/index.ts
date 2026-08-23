@@ -1,3 +1,8 @@
+import {
+  type RateLimitClass,
+  rateLimitClasses,
+} from "../../../../../apps/dont-text-your-ex/contracts/rate-limit-policy";
+
 export type RateLimitResult = Readonly<{ success: boolean }>;
 
 export type RateLimitBinding = {
@@ -12,33 +17,11 @@ export type EdgeEnv = {
   MUTATION_RATE_LIMITER: RateLimitBinding;
 };
 
-type SpecificRouteClass = "auth" | "invite" | "reportEvidence" | "mutation";
-type RouteClass = "general" | SpecificRouteClass;
 type OriginFetch = (request: Request) => Promise<Response>;
 
-const STATE_CHANGING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
 const RETRY_AFTER_SECONDS = 60;
 
-function specificRouteClass(request: Request): SpecificRouteClass | null {
-  const { pathname } = new URL(request.url);
-  if (pathname.startsWith("/api/auth/")) return "auth";
-  if (pathname === "/api/jars/join" || pathname === "/api/jars/preview") {
-    return "invite";
-  }
-  if (
-    STATE_CHANGING_METHODS.has(request.method) &&
-    (/^\/api\/jars\/[^/]+\/reports$/.test(pathname) ||
-      pathname === "/api/moderation/reports" ||
-      pathname.startsWith("/api/moderation/reports/") ||
-      pathname.startsWith("/api/reports/") ||
-      (request.method === "PATCH" && pathname === "/api/me"))
-  ) {
-    return "reportEvidence";
-  }
-  return STATE_CHANGING_METHODS.has(request.method) ? "mutation" : null;
-}
-
-function bindingFor(env: EdgeEnv, routeClass: RouteClass): RateLimitBinding {
+function bindingFor(env: EdgeEnv, routeClass: RateLimitClass): RateLimitBinding {
   switch (routeClass) {
     case "general":
       return env.GENERAL_RATE_LIMITER;
@@ -65,7 +48,7 @@ function isCloudflareClientAddress(value: string): boolean {
   );
 }
 
-async function opaqueKey(clientAddress: string, routeClass: RouteClass): Promise<string> {
+async function opaqueKey(clientAddress: string, routeClass: RateLimitClass): Promise<string> {
   const encoded = new TextEncoder().encode(`${routeClass}\0${clientAddress}`);
   const digest = await crypto.subtle.digest("SHA-256", encoded);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -81,7 +64,7 @@ function jsonResponse(body: unknown, status: number, marker: string): Response {
   });
 }
 
-function denied(routeClass: RouteClass): Response {
+function denied(routeClass: RateLimitClass): Response {
   if (routeClass === "invite") {
     return jsonResponse(
       { error: "invite_rate_limited", retryAfterSeconds: RETRY_AFTER_SECONDS },
@@ -108,8 +91,8 @@ export async function handleRequest(
   const clientAddress = request.headers.get("CF-Connecting-IP") ?? "";
   if (!isCloudflareClientAddress(clientAddress)) return unavailable();
 
-  const specific = specificRouteClass(request);
-  const routeClasses: readonly RouteClass[] = specific ? ["general", specific] : ["general"];
+  const { pathname } = new URL(request.url);
+  const routeClasses = rateLimitClasses(request.method, pathname);
   try {
     for (const routeClass of routeClasses) {
       const result = await bindingFor(env, routeClass).limit({

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { AbuseReportIdSchema, UserIdSchema } from "../../../../contracts";
 import { createModerationNarrativeCipher, parseModerationNarrativeKeyring } from "../moderation";
-import { executeModerationAdminCommand, type ModerationAdminStore } from "../moderation-admin";
+import {
+  executeModerationAdminCommand,
+  type ModerationAdminStore,
+  PostgresModerationAdminStore,
+} from "../moderation-admin";
 
 function fakeStore(): ModerationAdminStore {
   return {
@@ -50,10 +55,11 @@ describe("moderation operator narrative access", () => {
 
   it("returns a machine-readable queue without narratives", async () => {
     const store = fakeStore();
+    const reportId = AbuseReportIdSchema.parse(`abr_${"b".repeat(32)}`);
     store.listQueue = async () => [
       {
-        reportId: "abr_queue",
-        targetUserId: "usr_target",
+        reportId,
+        targetUserId: UserIdSchema.parse("usr_target"),
         status: "submitted",
         hasNarrative: true,
         referencedJarId: null,
@@ -76,11 +82,11 @@ describe("moderation operator narrative access", () => {
 
   it("decrypts one report only for an explicit show command", async () => {
     const store = fakeStore();
-    const reportId = `abr_${"c".repeat(32)}`;
+    const reportId = AbuseReportIdSchema.parse(`abr_${"c".repeat(32)}`);
     store.show = async (requestedId) => ({
       reportId: requestedId,
-      reporterUserId: "usr_reporter",
-      targetUserId: "usr_target",
+      reporterUserId: UserIdSchema.parse("usr_reporter"),
+      targetUserId: UserIdSchema.parse("usr_target"),
       status: "reviewing",
       narrative: "explicitly requested narrative",
       referencedJarId: null,
@@ -105,7 +111,7 @@ describe("moderation operator narrative access", () => {
 
   it("returns a machine-readable idempotent transition receipt", async () => {
     const store = fakeStore();
-    const reportId = `abr_${"d".repeat(32)}`;
+    const reportId = AbuseReportIdSchema.parse(`abr_${"d".repeat(32)}`);
     store.transition = async (requestedId, status) => ({
       reportId: requestedId,
       status,
@@ -125,5 +131,53 @@ describe("moderation operator narrative access", () => {
       status: "resolved",
       changed: false,
     });
+  });
+
+  it.each([
+    ["show", ["show", "abr_not_valid", "--acknowledge-production"]],
+    [
+      "transition",
+      ["transition", `abr_${"A".repeat(32)}`, "reviewing", "--acknowledge-production"],
+    ],
+  ])("rejects an invalid report ID for %s through the shared schema", async (_command, argv) => {
+    await expect(
+      executeModerationAdminCommand({
+        argv,
+        productionRuntime: true,
+        store: fakeStore(),
+      }),
+    ).rejects.toMatchObject({ code: "invalid_report_id" });
+  });
+
+  it("rejects malformed PostgreSQL rows at the adapter boundary", async () => {
+    const database = {
+      connect: async () => ({
+        query: async () => ({
+          rows: [
+            {
+              id: "not-an-abuse-report-id",
+              target_user_id: null,
+              status: "submitted",
+              has_narrative: false,
+              referenced_jar_id: null,
+              referenced_gameplay_report_id: null,
+              created_at: 1,
+              updated_at: 1,
+            },
+          ],
+        }),
+        release: () => undefined,
+      }),
+    };
+    const cipher = createModerationNarrativeCipher(
+      parseModerationNarrativeKeyring({
+        activeKeyId: "test-v1",
+        keys: { "test-v1": Buffer.alloc(32, 13).toString("base64") },
+      }),
+    );
+
+    await expect(new PostgresModerationAdminStore(database, cipher).listQueue()).rejects.toThrow(
+      "invalid AbuseReportId",
+    );
   });
 });

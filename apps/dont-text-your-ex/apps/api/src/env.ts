@@ -20,6 +20,7 @@ const ENV = defineEnv({
     "/run/moderation-secrets/MODERATION_NARRATIVE_KEYRING",
   ),
   MODERATION_NARRATIVE_KEYRING: str().optional(),
+  KUBERNETES_SERVICE_HOST: str().optional(),
   TYE_RESET: str().optional(),
 });
 
@@ -88,6 +89,10 @@ export function requireDatabaseUrl(): string {
 
 export function isProduction(): boolean {
   return ENV.APP_ENV === "production";
+}
+
+export function isKubernetesRuntime(): boolean {
+  return ENV.KUBERNETES_SERVICE_HOST !== undefined;
 }
 
 export function shouldResetDatabase(): boolean {

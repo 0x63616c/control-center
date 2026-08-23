@@ -1,50 +1,109 @@
 import { genId } from "@www/platform";
-import type { Pool } from "pg";
+import { z } from "zod";
+import {
+  type AbuseReportId,
+  AbuseReportIdSchema,
+  type JarId,
+  JarIdSchema,
+  type ReportId,
+  ReportIdSchema,
+  type UserId,
+  UserIdSchema,
+} from "../../../contracts";
 import type { ModerationNarrativeCipher } from "./moderation";
 
 export const MODERATION_OPERATOR_IDENTITY = "operator:calum-peter-webb" as const;
 export const MODERATION_PRODUCTION_ACKNOWLEDGEMENT = "--acknowledge-production" as const;
 
-export type ModerationStatus = "submitted" | "reviewing" | "resolved" | "dismissed";
+type ModerationAdminDatabase = Readonly<{
+  connect(): Promise<{
+    query(sql: string, parameters?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
+    release(): void;
+  }>;
+}>;
+
+const ModerationStatusSchema = z.enum(["submitted", "reviewing", "resolved", "dismissed"]);
+const OpenModerationStatusSchema = z.enum(["submitted", "reviewing"]);
+const ModerationTransitionStatusSchema = z.enum(["reviewing", "resolved", "dismissed"]);
+
+export type ModerationStatus = z.infer<typeof ModerationStatusSchema>;
+type ModerationTransitionStatus = z.infer<typeof ModerationTransitionStatusSchema>;
+
+const ModerationQueueRowSchema = z.object({
+  id: AbuseReportIdSchema,
+  target_user_id: UserIdSchema.nullable(),
+  status: OpenModerationStatusSchema,
+  has_narrative: z.boolean(),
+  referenced_jar_id: JarIdSchema.nullable(),
+  referenced_gameplay_report_id: ReportIdSchema.nullable(),
+  created_at: z.number(),
+  updated_at: z.number(),
+});
+
+const ModerationReportRowSchema = z.object({
+  id: AbuseReportIdSchema,
+  reporter_user_id: UserIdSchema.nullable(),
+  target_user_id: UserIdSchema.nullable(),
+  narrative_ciphertext: z.string().nullable(),
+  narrative_nonce: z.string().nullable(),
+  narrative_key_version: z.string().nullable(),
+  referenced_jar_id: JarIdSchema.nullable(),
+  referenced_gameplay_report_id: ReportIdSchema.nullable(),
+  status: ModerationStatusSchema,
+  created_at: z.number(),
+  updated_at: z.number(),
+});
+
+const ModerationAuditEventRowSchema = z.object({
+  event_type: ModerationStatusSchema,
+  actor_identity: z.string().nullable(),
+  actor_user_id: UserIdSchema.nullable(),
+  created_at: z.number(),
+});
+
+const ModerationTransitionRowSchema = z.object({
+  status: ModerationStatusSchema,
+  updated_at: z.number(),
+});
 
 export type ModerationQueueItem = Readonly<{
-  reportId: string;
-  targetUserId: string | null;
+  reportId: AbuseReportId;
+  targetUserId: UserId | null;
   status: "submitted" | "reviewing";
   hasNarrative: boolean;
-  referencedJarId: string | null;
-  referencedGameplayReportId: string | null;
+  referencedJarId: JarId | null;
+  referencedGameplayReportId: ReportId | null;
   createdAt: number;
   updatedAt: number;
 }>;
 
 export type ModerationReportDetail = Readonly<{
-  reportId: string;
-  reporterUserId: string | null;
-  targetUserId: string | null;
+  reportId: AbuseReportId;
+  reporterUserId: UserId | null;
+  targetUserId: UserId | null;
   status: ModerationStatus;
   narrative: string | null;
-  referencedJarId: string | null;
-  referencedGameplayReportId: string | null;
+  referencedJarId: JarId | null;
+  referencedGameplayReportId: ReportId | null;
   createdAt: number;
   updatedAt: number;
   auditEvents: readonly Readonly<{
     eventType: ModerationStatus;
     actorIdentity: string | null;
-    actorUserId: string | null;
+    actorUserId: UserId | null;
     createdAt: number;
   }>[];
 }>;
 
 export interface ModerationAdminStore {
   listQueue(): Promise<readonly ModerationQueueItem[]>;
-  show(reportId: string): Promise<ModerationReportDetail>;
+  show(reportId: AbuseReportId): Promise<ModerationReportDetail>;
   transition(
-    reportId: string,
-    status: Exclude<ModerationStatus, "submitted">,
+    reportId: AbuseReportId,
+    status: ModerationTransitionStatus,
   ): Promise<{
-    reportId: string;
-    status: Exclude<ModerationStatus, "submitted">;
+    reportId: AbuseReportId;
+    status: ModerationTransitionStatus;
     changed: boolean;
   }>;
 }
@@ -65,6 +124,12 @@ function assertModerationAdminRuntime(argv: readonly string[], productionRuntime
   }
 }
 
+function parseReportIdArgument(raw: unknown): AbuseReportId {
+  const parsed = AbuseReportIdSchema.safeParse(raw);
+  if (!parsed.success) throw new ModerationAdminCliError("invalid_report_id");
+  return parsed.data;
+}
+
 export async function executeModerationAdminCommand(input: {
   readonly argv: readonly string[];
   readonly productionRuntime: boolean;
@@ -76,22 +141,20 @@ export async function executeModerationAdminCommand(input: {
     return { ok: true, command: "list", reports: await input.store.listQueue() };
   }
   if (args.length === 2 && args[0] === "show") {
-    const reportId = args[1] ?? "";
-    if (!/^abr_[a-f0-9]{32}$/.test(reportId)) {
-      throw new ModerationAdminCliError("invalid_report_id");
-    }
+    const reportId = parseReportIdArgument(args[1]);
     return { ok: true, command: "show", report: await input.store.show(reportId) };
   }
   if (args.length === 3 && args[0] === "transition") {
-    const reportId = args[1] ?? "";
-    if (!/^abr_[a-f0-9]{32}$/.test(reportId)) {
-      throw new ModerationAdminCliError("invalid_report_id");
-    }
-    const status = args[2];
-    if (status !== "reviewing" && status !== "resolved" && status !== "dismissed") {
+    const reportId = parseReportIdArgument(args[1]);
+    const parsedStatus = ModerationTransitionStatusSchema.safeParse(args[2]);
+    if (!parsedStatus.success) {
       throw new ModerationAdminCliError("invalid_status");
     }
-    return { ok: true, command: "transition", ...(await input.store.transition(reportId, status)) };
+    return {
+      ok: true,
+      command: "transition",
+      ...(await input.store.transition(reportId, parsedStatus.data)),
+    };
   }
   throw new ModerationAdminCliError("unsupported_command");
 }
@@ -106,10 +169,7 @@ export async function runModerationAdminCli(
     throw new ModerationAdminCliError("production_acknowledgement_required");
   }
   const env = await import("./env");
-  assertModerationAdminRuntime(
-    argv,
-    env.isProduction() && Boolean(Bun.env.KUBERNETES_SERVICE_HOST),
-  );
+  assertModerationAdminRuntime(argv, env.isProduction() && env.isKubernetesRuntime());
   const [{ pool }, moderation] = await Promise.all([import("./db/index"), import("./moderation")]);
   env.requireDatabaseUrl();
   const store = new PostgresModerationAdminStore(
@@ -125,10 +185,9 @@ export async function runModerationAdminCli(
   }
 }
 
-// Concrete store and CLI entrypoint are added behind the command contract.
 export class PostgresModerationAdminStore implements ModerationAdminStore {
   constructor(
-    private readonly database: Pick<Pool, "connect">,
+    private readonly database: ModerationAdminDatabase,
     private readonly narrativeCipher: ModerationNarrativeCipher,
     private readonly clock: () => number = Date.now,
   ) {}
@@ -136,16 +195,7 @@ export class PostgresModerationAdminStore implements ModerationAdminStore {
   async listQueue(): Promise<readonly ModerationQueueItem[]> {
     const client = await this.database.connect();
     try {
-      const result = await client.query<{
-        id: string;
-        target_user_id: string | null;
-        status: "submitted" | "reviewing";
-        has_narrative: boolean;
-        referenced_jar_id: string | null;
-        referenced_gameplay_report_id: string | null;
-        created_at: number;
-        updated_at: number;
-      }>(
+      const result = await client.query(
         `SELECT id,target_user_id,status,
                 (narrative_ciphertext IS NOT NULL) AS has_narrative,
                 referenced_jar_id,referenced_gameplay_report_id,
@@ -155,37 +205,27 @@ export class PostgresModerationAdminStore implements ModerationAdminStore {
          WHERE status IN ('submitted','reviewing')
          ORDER BY created_at,id`,
       );
-      return result.rows.map((row) => ({
-        reportId: row.id,
-        targetUserId: row.target_user_id,
-        status: row.status,
-        hasNarrative: row.has_narrative,
-        referencedJarId: row.referenced_jar_id,
-        referencedGameplayReportId: row.referenced_gameplay_report_id,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      }));
+      return result.rows
+        .map((rawRow) => ModerationQueueRowSchema.parse(rawRow))
+        .map((row) => ({
+          reportId: row.id,
+          targetUserId: row.target_user_id,
+          status: row.status,
+          hasNarrative: row.has_narrative,
+          referencedJarId: row.referenced_jar_id,
+          referencedGameplayReportId: row.referenced_gameplay_report_id,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        }));
     } finally {
       client.release();
     }
   }
 
-  async show(reportId: string): Promise<ModerationReportDetail> {
+  async show(reportId: AbuseReportId): Promise<ModerationReportDetail> {
     const client = await this.database.connect();
     try {
-      const result = await client.query<{
-        id: string;
-        reporter_user_id: string | null;
-        target_user_id: string | null;
-        narrative_ciphertext: string | null;
-        narrative_nonce: string | null;
-        narrative_key_version: string | null;
-        referenced_jar_id: string | null;
-        referenced_gameplay_report_id: string | null;
-        status: ModerationStatus;
-        created_at: number;
-        updated_at: number;
-      }>(
+      const result = await client.query(
         `SELECT id,reporter_user_id,target_user_id,narrative_ciphertext,narrative_nonce,
                 narrative_key_version,referenced_jar_id,referenced_gameplay_report_id,status,
                 created_at::double precision AS created_at,
@@ -193,20 +233,17 @@ export class PostgresModerationAdminStore implements ModerationAdminStore {
          FROM abuse_report WHERE id=$1`,
         [reportId],
       );
-      const row = result.rows[0];
-      if (!row) throw new ModerationAdminCliError("report_not_found");
-      const audit = await client.query<{
-        event_type: ModerationStatus;
-        actor_identity: string | null;
-        actor_user_id: string | null;
-        created_at: number;
-      }>(
+      const rawRow = result.rows[0];
+      if (!rawRow) throw new ModerationAdminCliError("report_not_found");
+      const row = ModerationReportRowSchema.parse(rawRow);
+      const audit = await client.query(
         `SELECT event_type,actor_identity,actor_user_id,
                 created_at::double precision AS created_at
          FROM abuse_report_audit_event
          WHERE abuse_report_id=$1 ORDER BY created_at,id`,
         [reportId],
       );
+      const auditEvents = audit.rows.map((event) => ModerationAuditEventRowSchema.parse(event));
       const narrative =
         row.narrative_ciphertext && row.narrative_nonce && row.narrative_key_version
           ? this.narrativeCipher.open(
@@ -228,7 +265,7 @@ export class PostgresModerationAdminStore implements ModerationAdminStore {
         referencedGameplayReportId: row.referenced_gameplay_report_id,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
-        auditEvents: audit.rows.map((event) => ({
+        auditEvents: auditEvents.map((event) => ({
           eventType: event.event_type,
           actorIdentity: event.actor_identity,
           actorUserId: event.actor_user_id,
@@ -241,26 +278,24 @@ export class PostgresModerationAdminStore implements ModerationAdminStore {
   }
 
   async transition(
-    reportId: string,
-    status: Exclude<ModerationStatus, "submitted">,
+    reportId: AbuseReportId,
+    status: ModerationTransitionStatus,
   ): Promise<{
-    reportId: string;
-    status: Exclude<ModerationStatus, "submitted">;
+    reportId: AbuseReportId;
+    status: ModerationTransitionStatus;
     changed: boolean;
   }> {
     const client = await this.database.connect();
     try {
       await client.query("BEGIN");
-      const selected = await client.query<{
-        status: ModerationStatus;
-        updated_at: number;
-      }>(
+      const selected = await client.query(
         `SELECT status,updated_at::double precision AS updated_at
          FROM abuse_report WHERE id=$1 FOR UPDATE`,
         [reportId],
       );
-      const current = selected.rows[0];
-      if (!current) throw new ModerationAdminCliError("report_not_found");
+      const rawCurrent = selected.rows[0];
+      if (!rawCurrent) throw new ModerationAdminCliError("report_not_found");
+      const current = ModerationTransitionRowSchema.parse(rawCurrent);
       if (current.status === status) {
         await client.query("COMMIT");
         return { reportId, status, changed: false };

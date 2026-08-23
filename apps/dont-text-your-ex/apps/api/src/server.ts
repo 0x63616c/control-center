@@ -10,6 +10,7 @@ import {
   originClientRateLimit,
   originUserRateLimit,
 } from "./origin-rate-limit";
+import { privacySafeRequestPath } from "./request-log-path";
 
 const log = createLogger({ service: "dont-text-your-ex-api" });
 
@@ -49,7 +50,7 @@ export function buildApp(options: BuildAppOptions = {}): Hono<Env> {
     log.info(
       {
         method: c.req.method,
-        path: c.req.path,
+        path: privacySafeRequestPath(c.req.path),
         status: c.res.status,
         ms: Date.now() - start,
         origin: c.req.header("Origin") ?? null,
