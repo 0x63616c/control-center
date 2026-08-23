@@ -56,7 +56,9 @@ CREATE TABLE deletion_restore_tombstone (
   deletion_request_id TEXT PRIMARY KEY REFERENCES account_deletion_request(id) ON DELETE CASCADE,
   user_hmac TEXT NOT NULL,
   key_version TEXT NOT NULL,
+  signature TEXT NOT NULL,
+  signature_key_version TEXT NOT NULL,
+  journal_published_at BIGINT NOT NULL,
   completed_at BIGINT,
   expires_at BIGINT NOT NULL
 );
-

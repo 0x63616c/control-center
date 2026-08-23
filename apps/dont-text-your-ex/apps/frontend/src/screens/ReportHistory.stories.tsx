@@ -78,6 +78,7 @@ function context<Name extends RouteFor<"reportHistory" | "reportDetail">["name"]
     tab: fn(),
     signIn: fn(),
     signOut: fn(),
+    deleteAccount: fn(),
     sessionExpired: false,
     fireBurst: fn(),
     hasPendingReport: false,

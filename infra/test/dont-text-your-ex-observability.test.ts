@@ -23,6 +23,7 @@ describe("DTYE Temporal operations observability", () => {
       "DtyeTemporalMainPollerMissing",
       "DtyeOutboxRecoverySilent",
       "DtyeSessionMaintenanceSilent",
+      "DtyeAccountDeletionErasureStuck",
     ]);
     expect(alerts.find((rule) => rule.alert === "DtyeTemporalMainPollerMissing")?.expr).toContain(
       'task_queue="main"',
@@ -32,6 +33,9 @@ describe("DTYE Temporal operations observability", () => {
     );
     expect(alerts.find((rule) => rule.alert === "DtyeSessionMaintenanceSilent")?.expr).toContain(
       "> 108000",
+    );
+    expect(alerts.find((rule) => rule.alert === "DtyeAccountDeletionErasureStuck")?.expr).toContain(
+      "www_dtye_account_deletion_erasure_stuck_total",
     );
   });
 

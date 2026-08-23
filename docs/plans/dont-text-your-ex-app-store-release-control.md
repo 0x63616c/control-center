@@ -740,12 +740,14 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 | 2026-08-22 | P01 | Recommended release defaults and legal identity | OWNER APPROVAL RECORDED; ONE FIELD OPEN | `2940b01cd` baseline | Calum approved the recommended release defaults, identified the project as personal/non-commercial with no company, supplied the individual legal/privacy-owner name **Calum Peter Webb**, and approved **support@worldwidewebb.co** as the public support contact. The private forwarding destination is intentionally not recorded in the public repository. The deletion conflict is resolved in favor of active-member succession plus immediate local erasure with durable Apple retry. Only the Content Rights attestation remains open | Calum + coordinator; DSA wording checked against current Apple guidance |
 | 2026-08-23T16:48:33Z | P01/P02 | Final owner attestation and dependency closure | PASS — BOTH PACKETS PROVEN | `8b28d1ff2` branch baseline | Calum confirmed all app code, text, images, and other content are owned or appropriately licensed. This closes the final P01 field and satisfies P02's only dependency; P02's merged implementation, immutable CI, production deployment, public probes, and independently reviewed 20-image evidence set remain valid | Calum + coordinator |
 | 2026-08-23 | Operations | Temporal worker production repair | PASS | PR [#713](https://github.com/0x63616c/world-wide-webb/pull/713), `e710e1378` | Main CI [32598528985](https://github.com/0x63616c/world-wide-webb/actions/runs/32598528985) passed; live `dont-text-your-ex` deployment and pod were ready 1/1 with zero restarts after the runtime-image fix | Coordinator live cluster verification |
+| 2026-08-23T18:17:52Z | P03 | Local account-deletion implementation matrix | LOCAL PROOF PASS; REVIEW/CI/DEPLOY PENDING | `codex/dtye-p03-account-deletion` worktree | [P03 evidence](../evidence/dont-text-your-ex/p03/README.md): API 152/152; worker 125/125 including real Temporal and Postgres tracer; frontend 47/47; Storybook 3/3; notifications 15/15; platform 17/17; infra 8/8; all scoped typechecks; iOS build, sync, metadata, and entitlements checks passed. Production Apple revocation key, review, merge-SHA CI, deployment, live restore rehearsal, and public/device proof remain | Coordinator; independent standards/spec review pending |
 
 ## Blocker ledger
 
 | Opened | Packet | Blocker | Owner | Next action | Status |
 |---|---|---|---|---|---|
 | 2026-08-15 | P01 | Owner/legal/product decisions not yet recorded | Calum | None; all owner decisions are recorded | RESOLVED 2026-08-23 |
+| 2026-08-23 | P03 | Production Apple token revocation credentials are incomplete | Calum + coordinator | Calum signs in to Apple Developer; coordinator prepares a dedicated Sign in with Apple key and, immediately before the irreversible create/download action, obtains confirmation, then stores it in SOPS without exposing its value | OPEN |
 
 ## Notification ledger
 
@@ -762,10 +764,11 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 
 - **Calculated progress:** 13% (`P00`, `P01`, and `P02` proven).
 - **Current packet:** P03.
-- **Current blockers:** none. The public support address is
+- **Current blockers:** production Apple token revocation requires a dedicated
+  Sign in with Apple key. The public support address is
   `support@worldwidewebb.co`; its private forwarding destination is deliberately
   excluded from repository evidence. Build 25 remains an interim TestFlight
   build, not the final compliance release candidate.
-- **Next action:** implement and prove transactional account deletion, Apple
-  revocation retry, session invalidation, shared-jar succession, and fresh
-  re-registration semantics against real Postgres.
+- **Next action:** finish independent review and immutable CI for P03 while Calum
+  signs in to Apple Developer for the dedicated revocation key; then merge,
+  deploy, and collect live P03 evidence.

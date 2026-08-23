@@ -87,6 +87,7 @@ function context(nav = fn()): AppCtx<RouteFor<"rescue">> {
     tab: fn(),
     signIn: fn(),
     signOut: fn(),
+    deleteAccount: fn(),
     sessionExpired: false,
     fireBurst: fn(),
     hasPendingReport: false,

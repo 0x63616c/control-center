@@ -41,7 +41,7 @@ async function appleError(response: Response): Promise<{ code: string }> {
   }
 }
 
-function permanentAppleError(status: number, code: string): boolean {
+function permanentAppleError(status: number): boolean {
   return status >= 400 && status < 500 && status !== 408 && status !== 429;
 }
 
@@ -69,8 +69,7 @@ export function createAppleRevocationGateway(input: {
       });
       if (!response.ok) {
         const { code } = await appleError(response);
-        if (permanentAppleError(response.status, code))
-          throw new AppleRevocationPermanentError(code);
+        if (permanentAppleError(response.status)) throw new AppleRevocationPermanentError(code);
         throw new Error(`Apple token exchange temporarily unavailable: ${code}`);
       }
       const body = (await response.json()) as { refresh_token?: unknown };
@@ -87,7 +86,7 @@ export function createAppleRevocationGateway(input: {
       if (response.ok) return;
       const { code } = await appleError(response);
       if (code === "invalid_token") return;
-      if (permanentAppleError(response.status, code)) throw new AppleRevocationPermanentError(code);
+      if (permanentAppleError(response.status)) throw new AppleRevocationPermanentError(code);
       throw new Error(`Apple token revocation temporarily unavailable: ${code}`);
     },
   };

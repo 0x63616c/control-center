@@ -49,6 +49,8 @@ describe("request schemas", () => {
     const request = {
       confirmed: true,
       authorizationCode: "single-use-authorization-code",
+      identityToken: "signed.identity.token",
+      nonce: "nonce_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     };
     const response = {
       status: "accepted",
@@ -61,6 +63,12 @@ describe("request schemas", () => {
 
     expect(DeleteAccountRequestSchema.parse(request)).toEqual(request);
     expect(DeleteAccountRequestSchema.parse({ confirmed: true })).toEqual({ confirmed: true });
+    expect(
+      DeleteAccountRequestSchema.safeParse({
+        confirmed: true,
+        authorizationCode: request.authorizationCode,
+      }).success,
+    ).toBe(false);
     expect(DeleteAccountRequestSchema.safeParse({ confirmed: false }).success).toBe(false);
     expect(DeleteAccountResponseSchema.parse(response)).toEqual(response);
     expect(AccountDeletionWorkflowInputSchema.parse(workflow)).toEqual(workflow);

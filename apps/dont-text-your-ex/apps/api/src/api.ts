@@ -33,7 +33,11 @@ import {
   UpdateTimeZoneRequestSchema,
   type UserId,
 } from "../../../contracts";
-import { completeAppleAccountSignIn, verifyAppleIdentityToken } from "./apple-auth";
+import {
+  completeAppleAccountSignIn,
+  verifyAppleAccountReauthentication,
+  verifyAppleIdentityToken,
+} from "./apple-auth";
 import { requireUser } from "./auth";
 import { errorDetails, parseRequestJson, parseRequestValue } from "./boundary";
 import { appleBundleId, isProduction } from "./env";
@@ -191,6 +195,22 @@ api.delete("/me", async (c) => {
   if (!uid) return c.json(unauth, 401);
   const parsed = await parseRequestJson(c, DeleteAccountRequestSchema);
   if (!parsed.ok) return parsed.response;
+  const expectedAppleSubject = await store.appleSubjectForUser(uid);
+  if (expectedAppleSubject) {
+    const { identityToken, nonce, authorizationCode } = parsed.value;
+    if (!identityToken || !nonce || !authorizationCode) {
+      return c.json({ error: "Fresh Sign in with Apple authorization is required" }, 401);
+    }
+    try {
+      await verifyAppleAccountReauthentication({
+        identityToken,
+        nonce,
+        expectedSubject: expectedAppleSubject,
+      });
+    } catch {
+      return c.json({ error: "Sign in with Apple reauthentication failed" }, 401);
+    }
+  }
   const receipt = await store.requestAccountDeletion(uid, parsed.value.authorizationCode);
   return c.json(DeleteAccountResponseSchema.parse(receipt), 202);
 });

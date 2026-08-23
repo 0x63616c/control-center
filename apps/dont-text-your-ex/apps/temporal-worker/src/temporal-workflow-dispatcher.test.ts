@@ -142,6 +142,22 @@ describe("Temporal workflow dispatcher", () => {
     expect(handler.operations()).toEqual([temporalOperationFor(inviteIssued)]);
   });
 
+  it("acknowledges an inventoried stale event without recreating its Temporal workflow", async () => {
+    const handler = new RecordingTemporalEventHandler();
+    const dispatchUnlessSuppressed = vi.fn(async () => false);
+    const dispatcher = new TemporalWorkflowDispatcher(
+      { "invite.issued": handler },
+      { dispatchUnlessSuppressed },
+    );
+
+    await expect(dispatcher.dispatch(inviteIssued)).resolves.toEqual({ status: "accepted" });
+    expect(dispatchUnlessSuppressed).toHaveBeenCalledWith(
+      "invite/inv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      expect.any(Function),
+    );
+    expect(handler.operations()).toEqual([]);
+  });
+
   it.each([
     ["report.jar_closed", "jarClosed"],
     ["report.member_departed", "memberDeparted"],

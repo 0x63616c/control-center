@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { genId } from "@www/platform";
-import type { Pool, PoolClient } from "pg";
+import type { Pool } from "pg";
 import {
+  accountMutationLockKey,
   NOTIFICATION_CATEGORIES,
   type NotificationCategory,
   NotificationCategorySchema,
@@ -37,7 +38,7 @@ export type DeliveryLoadResult =
   | { readonly kind: "ready"; readonly delivery: DeliveryForSend }
   | { readonly kind: "terminal"; readonly state: DeliveryTerminalState };
 
-type Queryable = Pick<Pool | PoolClient, "query">;
+type Queryable = Pick<Pool, "connect" | "query">;
 
 export interface NotificationStore {
   registerDevice(userId: UserId, input: RegisterPushDeviceRequest): Promise<void>;
@@ -56,6 +57,10 @@ export interface NotificationStore {
     deliveryId: NotificationDeliveryId,
     outcome: PersistedDeliveryOutcome,
   ): Promise<void>;
+  withDeliveryAccountFence<T>(
+    deliveryId: NotificationDeliveryId,
+    effect: () => Promise<T>,
+  ): Promise<T | undefined>;
 }
 
 function defaultPreferences(): NotificationPreferences {
@@ -77,6 +82,51 @@ export function createNotificationStore(
   clock: () => number = Date.now,
 ): NotificationStore {
   return {
+    async withDeliveryAccountFence<T>(
+      deliveryId: NotificationDeliveryId,
+      effect: () => Promise<T>,
+    ): Promise<T | undefined> {
+      const client = await db.connect();
+      try {
+        await client.query("BEGIN");
+        const recipient = await client.query<{ user_id: UserId }>(
+          `SELECT n.recipient_user_id AS user_id
+           FROM notification_delivery d
+           JOIN user_notification n ON n.id=d.notification_id
+           WHERE d.id=$1`,
+          [deliveryId],
+        );
+        const userId = recipient.rows[0]?.user_id;
+        if (!userId) {
+          await client.query("COMMIT");
+          return undefined;
+        }
+        await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))", [
+          accountMutationLockKey(userId),
+        ]);
+        const eligible = await client.query(
+          "SELECT 1 FROM users WHERE id=$1 AND deletion_requested_at IS NULL",
+          [userId],
+        );
+        if (!eligible.rowCount) {
+          await client.query(
+            `UPDATE notification_delivery SET status='suppressed',updated_at=$2
+             WHERE id=$1 AND status='pending'`,
+            [deliveryId, clock()],
+          );
+          await client.query("COMMIT");
+          return undefined;
+        }
+        const result = await effect();
+        await client.query("COMMIT");
+        return result;
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
+    },
     async registerDevice(userId, input) {
       const sealed = cipher.seal(input.token, input.installationId);
       const tokenHash = createHash("sha256").update(input.token, "utf8").digest("hex");

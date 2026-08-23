@@ -15,6 +15,8 @@ export const DONT_TEXT_YOUR_EX_NAMESPACE = "dont-text-your-ex" as const;
 export const DONT_TEXT_YOUR_EX_HOSTNAME = "dont-text-your-ex.worldwidewebb.co";
 export const DONT_TEXT_YOUR_EX_API_PORT = 8787;
 export const DONT_TEXT_YOUR_EX_NOTIFICATION_SECRET_NAME = "dont-text-your-ex-notification-secrets";
+export const DONT_TEXT_YOUR_EX_ACCOUNT_DELETION_SECRET_NAME =
+  "dont-text-your-ex-account-deletion-secrets";
 const DONT_TEXT_YOUR_EX_FRONTEND_PORT = 80;
 
 export const DONT_TEXT_YOUR_EX_DATABASE = {
@@ -95,6 +97,8 @@ export function dontTextYourExSpecs(
         APPLE_BUNDLE_ID: "co.worldwidewebb.textyourex",
         TEMPORAL_ADDRESS: TEMPORAL_FRONTEND_CLUSTER_ADDRESS,
         PUSH_TOKEN_KEYRING_FILE: "/run/notification-secrets/PUSH_TOKEN_KEYRING",
+        ACCOUNT_DELETION_KEYRING_FILE: "/run/account-deletion-secrets/ACCOUNT_DELETION_KEYRING",
+        ERASURE_JOURNAL_DIR: "/erasure-journal",
       },
       extraSecretMounts: [
         {
@@ -106,6 +110,28 @@ export function dontTextYourExSpecs(
           secretName: DONT_TEXT_YOUR_EX_NOTIFICATION_SECRET_NAME,
           mountPath: "/run/notification-secrets",
           items: [{ key: "PUSH_TOKEN_KEYRING", path: "PUSH_TOKEN_KEYRING" }],
+        },
+        {
+          secretName: DONT_TEXT_YOUR_EX_ACCOUNT_DELETION_SECRET_NAME,
+          mountPath: "/run/account-deletion-secrets",
+          items: [
+            { key: "ACCOUNT_DELETION_KEYRING", path: "ACCOUNT_DELETION_KEYRING" },
+            {
+              key: "RESTORE_TOMBSTONE_HMAC_KEYRING",
+              path: "RESTORE_TOMBSTONE_HMAC_KEYRING",
+            },
+            {
+              key: "RESTORE_TOMBSTONE_SIGNING_KEYRING",
+              path: "RESTORE_TOMBSTONE_SIGNING_KEYRING",
+            },
+          ],
+        },
+      ],
+      volumes: [
+        {
+          mountPath: "/erasure-journal",
+          nfs: { server: nasNfsServer, path: "/volume1/Homelab" },
+          subPath: "backups/world-wide-webb/dont-text-your-ex/erasure-journal",
         },
       ],
       imagePullSecrets: [GHCR_PULL_SECRET_NAME],
@@ -127,6 +153,8 @@ export function dontTextYourExSpecs(
         POSTGRES_USER: DONT_TEXT_YOUR_EX_DATABASE.owner,
         POSTGRES_DB: DONT_TEXT_YOUR_EX_DATABASE.databaseName,
         POSTGRES_PASSWORD_FILE: "/run/secrets/POSTGRES_PASSWORD",
+        APPLE_BUNDLE_ID: "co.worldwidewebb.textyourex",
+        ERASURE_JOURNAL_DIR: "/erasure-journal",
       },
       scrape: { port: DEFAULT_METRICS_PORT },
       extraSecretMounts: [
@@ -144,6 +172,31 @@ export function dontTextYourExSpecs(
             { key: "APNS_KEY_CONTENT", path: "APNS_KEY_CONTENT" },
             { key: "PUSH_TOKEN_KEYRING", path: "PUSH_TOKEN_KEYRING" },
           ],
+        },
+        {
+          secretName: DONT_TEXT_YOUR_EX_ACCOUNT_DELETION_SECRET_NAME,
+          mountPath: "/run/account-deletion-secrets",
+          items: [
+            { key: "SIWA_KEY_ID", path: "SIWA_KEY_ID" },
+            { key: "SIWA_TEAM_ID", path: "SIWA_TEAM_ID" },
+            { key: "SIWA_KEY_CONTENT", path: "SIWA_KEY_CONTENT" },
+            { key: "ACCOUNT_DELETION_KEYRING", path: "ACCOUNT_DELETION_KEYRING" },
+            {
+              key: "RESTORE_TOMBSTONE_HMAC_KEYRING",
+              path: "RESTORE_TOMBSTONE_HMAC_KEYRING",
+            },
+            {
+              key: "RESTORE_TOMBSTONE_SIGNING_KEYRING",
+              path: "RESTORE_TOMBSTONE_SIGNING_KEYRING",
+            },
+          ],
+        },
+      ],
+      volumes: [
+        {
+          mountPath: "/erasure-journal",
+          nfs: { server: nasNfsServer, path: "/volume1/Homelab" },
+          subPath: "backups/world-wide-webb/dont-text-your-ex/erasure-journal",
         },
       ],
       imagePullSecrets: [GHCR_PULL_SECRET_NAME],
@@ -209,9 +262,30 @@ const NOTIFICATION_VAULT_KEYS = {
   PUSH_TOKEN_KEYRING: "DTYE_PUSH_TOKEN_KEYRING",
 } as const;
 
+const ACCOUNT_DELETION_VAULT_KEYS = {
+  SIWA_KEY_ID: "DTYE_SIWA_KEY_ID",
+  SIWA_TEAM_ID: "DTYE_SIWA_TEAM_ID",
+  SIWA_KEY_CONTENT: "DTYE_SIWA_KEY_CONTENT",
+  ACCOUNT_DELETION_KEYRING: "DTYE_ACCOUNT_DELETION_KEYRING",
+  RESTORE_TOMBSTONE_HMAC_KEYRING: "DTYE_RESTORE_TOMBSTONE_HMAC_KEYRING",
+  RESTORE_TOMBSTONE_SIGNING_KEYRING: "DTYE_RESTORE_TOMBSTONE_SIGNING_KEYRING",
+} as const;
+
 function notificationSecretData(vault: Record<string, string>) {
   return Object.fromEntries(
     Object.entries(NOTIFICATION_VAULT_KEYS).map(([name, vaultKey]) => {
+      const value = vault[vaultKey];
+      if (value === undefined) {
+        throw new Error(`vault key "${vaultKey}" not found (needed by DTYE/${name})`);
+      }
+      return [name, pulumi.secret(value)];
+    }),
+  );
+}
+
+function accountDeletionSecretData(vault: Record<string, string>) {
+  return Object.fromEntries(
+    Object.entries(ACCOUNT_DELETION_VAULT_KEYS).map(([name, vaultKey]) => {
       const value = vault[vaultKey];
       if (value === undefined) {
         throw new Error(`vault key "${vaultKey}" not found (needed by DTYE/${name})`);
@@ -302,6 +376,14 @@ export function installDontTextYourEx(args: DontTextYourExArgs) {
     },
     { provider },
   );
+  const accountDeletionSecret = new k8s.core.v1.Secret(
+    DONT_TEXT_YOUR_EX_ACCOUNT_DELETION_SECRET_NAME,
+    {
+      metadata: { name: DONT_TEXT_YOUR_EX_ACCOUNT_DELETION_SECRET_NAME, namespace },
+      stringData: accountDeletionSecretData(vault),
+    },
+    { provider },
+  );
 
   const workloads = specs.workloads.map(
     ({ namespaceName: _namespaceName, ...spec }) =>
@@ -311,9 +393,9 @@ export function installDontTextYourEx(args: DontTextYourExArgs) {
           provider,
           dependsOn:
             spec.name === "temporal-worker"
-              ? [cluster, temporalNamespaceJob, notificationSecret]
+              ? [cluster, temporalNamespaceJob, notificationSecret, accountDeletionSecret]
               : spec.name === "api"
-                ? [cluster, notificationSecret]
+                ? [cluster, notificationSecret, accountDeletionSecret]
                 : undefined,
         },
       ),
@@ -323,5 +405,12 @@ export function installDontTextYourEx(args: DontTextYourExArgs) {
     { ...backupSpec, provider, namespace },
     { provider, dependsOn: [cluster] },
   );
-  return { cluster, temporalNamespaceJob, notificationSecret, workloads, backup };
+  return {
+    cluster,
+    temporalNamespaceJob,
+    notificationSecret,
+    accountDeletionSecret,
+    workloads,
+    backup,
+  };
 }

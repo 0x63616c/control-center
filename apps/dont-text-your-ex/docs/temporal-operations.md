@@ -127,6 +127,21 @@ Trigger outbox recovery and verify the row reaches `dispatched`. Never bulk
 re-arm unknown failure classes, and never put raw provider/exception text into
 `last_error_code`; its database constraint permits only the finite registry.
 
+## Account deletion erasure
+
+`DtyeAccountDeletionErasureStuck` fires once a deletion's local erasure has
+retried for fifteen minutes without Postgres proving `locally_erased`. The
+workflow continues retrying; do not mark it complete or bypass erasure. Inspect
+the worker and database health using only the opaque deletion request ID from
+the restricted Temporal history. Never copy profile data, Apple credentials,
+or deleted-user identifiers into alerts or incident notes.
+
+Confirm the request remains in `accepted` or `erasing`, repair the underlying
+database or worker failure, and verify the same workflow advances through
+`locally_erased` to a terminal state. The privacy-safe counter records the
+threshold crossing; successful completion is proved by Postgres state and the
+workflow result, not by the alert resolving.
+
 ## Session maintenance recovery
 
 Authentication rejects an expired presented token synchronously, so maintenance

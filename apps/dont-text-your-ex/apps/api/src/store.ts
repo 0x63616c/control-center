@@ -24,6 +24,7 @@ import {
 } from "../../../contracts";
 import {
   type AccountDeletionReceipt,
+  accountMutationLockKey,
   createAccountDeletionCipher,
   PostgresAccountDeletionStore,
   parseAccountDeletionKeyring,
@@ -37,9 +38,19 @@ import {
   MembershipTenureIdSchema,
 } from "./domain-events";
 import { type DomainTransactionContext, DomainTransactionRunner } from "./domain-transaction";
-import { accountDeletionKeyringSource, temporalAddress } from "./env";
+import {
+  accountDeletionKeyringSource,
+  erasureJournalDirectory,
+  restoreTombstoneHmacKeyringSource,
+  restoreTombstoneSigningKeyringSource,
+  temporalAddress,
+} from "./env";
 import { id, inviteCode } from "./ids";
 import { parseEvidenceImageJson, serializeEvidenceImageJson } from "./persistence";
+import {
+  createFileRestoreTombstoneService,
+  parseRestoreTombstoneKeyring,
+} from "./restore-tombstone";
 import { TemporalPostCommitNudge, temporalRecoveryWorkflowStarter } from "./temporal-nudge";
 import type {
   ActivityDTO,
@@ -99,7 +110,7 @@ type JarRow = {
   rule: string;
   default_cents: number;
   currency: string;
-  created_by: UserId;
+  created_by: UserId | null;
   invite_code: InviteCode | null;
   invite_expires_at: string | null;
   invite_version_id: InviteVersionId;
@@ -119,7 +130,7 @@ type JarDbRow = Omit<
   "id" | "created_by" | "invite_code" | "invite_version_id" | "closed_by"
 > & {
   readonly id: string;
-  readonly created_by: string;
+  readonly created_by: string | null;
   readonly invite_code: string | null;
   readonly invite_version_id: string;
   readonly closed_by: string | null;
@@ -141,7 +152,7 @@ function parseJarRow(row: JarDbRow): JarRow {
   return {
     ...row,
     id: JarIdSchema.parse(row.id),
-    created_by: UserIdSchema.parse(row.created_by),
+    created_by: row.created_by == null ? null : UserIdSchema.parse(row.created_by),
     invite_code: row.invite_code == null ? null : InviteCodeSchema.parse(row.invite_code),
     invite_version_id: InviteVersionIdSchema.parse(row.invite_version_id),
     closed_by: row.closed_by == null ? null : UserIdSchema.parse(row.closed_by),
@@ -164,6 +175,11 @@ const accountDeletions = new PostgresAccountDeletionStore(
   domainTransactions,
   now,
   createAccountDeletionCipher(parseAccountDeletionKeyring(accountDeletionKeyringSource())),
+  createFileRestoreTombstoneService({
+    directory: erasureJournalDirectory(),
+    hmacKeys: parseRestoreTombstoneKeyring(restoreTombstoneHmacKeyringSource()),
+    signingKeys: parseRestoreTombstoneKeyring(restoreTombstoneSigningKeyringSource()),
+  }),
 );
 
 async function withTransaction<T>(
@@ -343,11 +359,45 @@ export async function deleteSession(token: SessionToken): Promise<void> {
   await pool.query("DELETE FROM sessions WHERE token=$1", [token]);
 }
 
+export async function withActiveAccountRequest<T>(
+  userId: UserId,
+  operation: () => Promise<T>,
+): Promise<{ readonly active: true; readonly value: T } | { readonly active: false }> {
+  const client = await pool.connect();
+  const lockKey = accountMutationLockKey(userId);
+  let locked = false;
+  try {
+    await client.query("SELECT pg_advisory_lock_shared(hashtextextended($1,0))", [lockKey]);
+    locked = true;
+    const active = await client.query(
+      "SELECT 1 FROM users WHERE id=$1 AND deletion_requested_at IS NULL",
+      [userId],
+    );
+    if (active.rowCount !== 1) return { active: false };
+    return { active: true, value: await operation() };
+  } finally {
+    if (locked) {
+      await client
+        .query("SELECT pg_advisory_unlock_shared(hashtextextended($1,0))", [lockKey])
+        .catch(() => undefined);
+    }
+    client.release();
+  }
+}
+
 export function requestAccountDeletion(
   userId: UserId,
   authorizationCode?: string,
 ): Promise<AccountDeletionReceipt> {
   return accountDeletions.request({ userId, authorizationCode });
+}
+
+export async function appleSubjectForUser(userId: UserId): Promise<string | null> {
+  const result = await pool.query<{ apple_id: string | null }>(
+    "SELECT apple_id FROM users WHERE id=$1",
+    [userId],
+  );
+  return result.rows[0]?.apple_id ?? null;
 }
 
 export async function findUserByPhone(phone: string): Promise<UserDTO | null> {

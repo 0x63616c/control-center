@@ -10,6 +10,7 @@ export const WORKFLOW_TYPES = [
   "StreakMilestoneSweepWorkflow",
   "InviteLifecycleWorkflow",
   "AccountDeletionWorkflow",
+  "AccountDeletionHistorySweepWorkflow",
 ] as const;
 export const MANAGED_SCHEDULE_PREFIX = "dtye_";
 export const ACTIVITY_TYPES = [
@@ -30,6 +31,11 @@ export const ACTIVITY_TYPES = [
   "eraseAccountLocally",
   "revokeAppleCredential",
   "finishAccountDeletion",
+  "terminateAssociatedWorkflows",
+  "deleteAssociatedWorkflowHistories",
+  "sweepAccountDeletionHistories",
+  "purgeExpiredAccountDeletionRecords",
+  "recordAccountDeletionErasureStuck",
 ] as const;
 export const SCHEDULES = [
   {
@@ -58,6 +64,15 @@ export const SCHEDULES = [
     args: { schemaVersion: 1 },
     timeout: "10 minutes",
     catchupWindow: "1 minute",
+  },
+  {
+    scheduleId: "dtye_account_deletion_history_sweep",
+    workflowType: "AccountDeletionHistorySweepWorkflow",
+    cron: "23 * * * *",
+    timezone: "UTC",
+    args: { schemaVersion: 1 },
+    timeout: "10 minutes",
+    catchupWindow: "1 hour",
   },
   {
     scheduleId: "dtye_session_maintenance",

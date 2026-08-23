@@ -75,6 +75,11 @@ export function createDtyeActivities(dependencies: DtyeActivityDependencies) {
       eraseAccountLocally: missingAccountDeletion,
       revokeAppleCredential: missingAccountDeletion,
       finishAccountDeletion: missingAccountDeletion,
+      terminateAssociatedWorkflows: missingAccountDeletion,
+      deleteAssociatedWorkflowHistories: missingAccountDeletion,
+      sweepAccountDeletionHistories: missingAccountDeletion,
+      purgeExpiredAccountDeletionRecords: missingAccountDeletion,
+      recordAccountDeletionErasureStuck: missingAccountDeletion,
     } satisfies AccountDeletionActivities);
   return {
     DtyeHealthCheckActivity,

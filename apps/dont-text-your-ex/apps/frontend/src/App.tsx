@@ -1,7 +1,12 @@
 import { App as NativeApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import { useCallback, useEffect, useState } from "react";
-import { JarIdSchema, ReportIdSchema, type SessionToken } from "../../../contracts";
+import {
+  type DeleteAccountRequest,
+  JarIdSchema,
+  ReportIdSchema,
+  type SessionToken,
+} from "../../../contracts";
 import { api, setToken } from "./api";
 import type { AppCtx, Route, TabName } from "./appctx";
 import { SupportBurst } from "./bits";
@@ -346,6 +351,20 @@ export default function App() {
     setHasPendingReport(false);
   }, []);
 
+  const deleteAccount = useCallback(
+    async (reauthentication?: Omit<DeleteAccountRequest, "confirmed">) => {
+      await disableCurrentPush(api.disablePushDevice, false).catch(() => undefined);
+      await api.deleteAccount({ confirmed: true, ...reauthentication });
+      setToken(null);
+      setMeState(null);
+      setStack([]);
+      setTabState("onboarding");
+      setSessionExpired(false);
+      setHasPendingReport(false);
+    },
+    [],
+  );
+
   const fireBurst = useCallback(() => {
     setBurst(true);
     setTimeout(() => setBurst(false), 2200);
@@ -364,6 +383,7 @@ export default function App() {
     tab: goTab,
     signIn,
     signOut,
+    deleteAccount,
     sessionExpired,
     fireBurst,
     hasPendingReport,

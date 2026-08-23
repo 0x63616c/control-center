@@ -5,6 +5,7 @@ import {
   type AppleAccountStore,
   completeAppleAccountSignIn,
   hashAppleNonce,
+  verifyAppleAccountReauthentication,
   verifyAppleIdentityToken,
 } from "../apple-auth";
 
@@ -37,6 +38,23 @@ describe("Sign in with Apple token verification", () => {
     await expect(verifyAppleIdentityToken(token, RAW_NONCE, publicKey)).resolves.toEqual({
       sub: "apple-user-123",
     });
+  });
+
+  it("accepts fresh account authorization only for the authenticated Apple subject", async () => {
+    const { token, publicKey } = await signedAppleToken(hashAppleNonce(RAW_NONCE));
+
+    await expect(
+      verifyAppleAccountReauthentication(
+        { identityToken: token, nonce: RAW_NONCE, expectedSubject: "apple-user-123" },
+        publicKey,
+      ),
+    ).resolves.toBeUndefined();
+    await expect(
+      verifyAppleAccountReauthentication(
+        { identityToken: token, nonce: RAW_NONCE, expectedSubject: "different-apple-user" },
+        publicKey,
+      ),
+    ).rejects.toThrow("does not match the authenticated account");
   });
 
   it("rejects a token bound to a different nonce", async () => {

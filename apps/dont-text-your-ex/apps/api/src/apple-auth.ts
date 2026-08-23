@@ -40,6 +40,16 @@ export async function verifyAppleIdentityToken(
   return { sub: payload.sub };
 }
 
+export async function verifyAppleAccountReauthentication(
+  input: Readonly<{ identityToken: string; nonce: string; expectedSubject: string }>,
+  verificationKey: AppleVerificationKey = APPLE_JWKS,
+): Promise<void> {
+  const { sub } = await verifyAppleIdentityToken(input.identityToken, input.nonce, verificationKey);
+  if (sub !== input.expectedSubject) {
+    throw new Error("Sign in with Apple account does not match the authenticated account");
+  }
+}
+
 export async function completeAppleAccountSignIn(
   appleId: string,
   fullName: string | undefined,

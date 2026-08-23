@@ -186,6 +186,7 @@ function context<Route extends P02Route>(
     tab: fn(),
     signIn: fn(),
     signOut: fn(async () => undefined),
+    deleteAccount: fn(async () => undefined),
     sessionExpired: false,
     fireBurst: fn(),
     hasPendingReport: false,
@@ -439,6 +440,9 @@ export const Profile: Story = {
         jars: fn(async () => [summary]),
         setShareStreak: fn(async () => ({ ok: true as const })),
         getNativeAppInfo: fn(async () => null),
+        isNativePlatform: fn(() => false),
+        createAppleSignInAttempt: fn(),
+        authorizeAppleSignIn: fn(),
       }}
     />
   ),

@@ -30,6 +30,10 @@ export type RescueInterventionId = z.infer<typeof RescueInterventionIdSchema>;
 export type AccountDeletionId = z.infer<typeof AccountDeletionIdSchema>;
 export type SessionToken = z.infer<typeof SessionTokenSchema>;
 
+export function accountMutationLockKey(userId: UserId): string {
+  return `dont-text-your-ex/account/${userId}`;
+}
+
 export const InviteCodeSchema = z
   .string()
   .trim()
@@ -60,8 +64,21 @@ export const DeleteAccountRequestSchema = z
   .object({
     confirmed: z.literal(true),
     authorizationCode: nonEmptyText.optional(),
+    identityToken: nonEmptyText.optional(),
+    nonce: z
+      .string()
+      .regex(/^nonce_[a-f0-9]{48}$/)
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (value) =>
+      [value.authorizationCode, value.identityToken, value.nonce].every(Boolean) ||
+      [value.authorizationCode, value.identityToken, value.nonce].every(
+        (item) => item === undefined,
+      ),
+    { message: "Apple reauthentication fields must be provided together" },
+  );
 export type DeleteAccountRequest = z.infer<typeof DeleteAccountRequestSchema>;
 
 export const AccountDeletionWorkflowInputSchema = z

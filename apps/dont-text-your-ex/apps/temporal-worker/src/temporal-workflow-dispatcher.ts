@@ -5,6 +5,7 @@ import {
 } from "@temporalio/client";
 import type { DomainEvent, DomainEventType } from "../../api/src/domain-events";
 import type { WorkflowDispatcher, WorkflowDispatchResult } from "../../api/src/workflow-dispatcher";
+import type { TemporalDispatchFence } from "./workflow-dispatch-fence";
 
 type WorkflowType =
   | "InviteLifecycleWorkflow"
@@ -266,7 +267,10 @@ const AUDIT_EVENT_TYPES = [
 ] as const;
 
 export class TemporalWorkflowDispatcher implements WorkflowDispatcher {
-  constructor(private readonly handlers: HandlerRegistry = {}) {}
+  constructor(
+    private readonly handlers: HandlerRegistry = {},
+    private readonly dispatchFence?: TemporalDispatchFence,
+  ) {}
 
   supportedEventTypes(): readonly DomainEventType[] {
     return [...AUDIT_EVENT_TYPES, ...(Object.keys(this.handlers) as DomainEventType[])];
@@ -278,7 +282,17 @@ export class TemporalWorkflowDispatcher implements WorkflowDispatcher {
     const handler = this.handlers[event.type];
     if (!handler) return { status: "permanent", code: "capability_not_registered" };
     try {
-      await handler.handle(operation, event);
+      if (
+        this.dispatchFence &&
+        operation.kind !== "fanout" &&
+        operation.workflowType !== "AccountDeletionWorkflow"
+      ) {
+        await this.dispatchFence.dispatchUnlessSuppressed(operation.workflowId, () =>
+          handler.handle(operation, event),
+        );
+      } else {
+        await handler.handle(operation, event);
+      }
       return { status: "accepted" };
     } catch {
       return { status: "retryable", code: "temporal_unavailable" };

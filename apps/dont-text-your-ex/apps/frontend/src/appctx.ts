@@ -1,4 +1,4 @@
-import type { JarId, ReportId, SessionToken } from "../../../contracts";
+import type { DeleteAccountRequest, JarId, ReportId, SessionToken } from "../../../contracts";
 import type { MeDTO } from "./types";
 
 export type Route =
@@ -44,6 +44,8 @@ export interface AppCtx<CurrentRoute extends Route = Route> {
   signIn: (token: SessionToken, me: MeDTO) => void;
   /** resolves only after the server revokes the current bearer session */
   signOut: () => Promise<void>;
+  /** accepts durable account deletion, then clears all local authenticated state */
+  deleteAccount: (reauthentication?: Omit<DeleteAccountRequest, "confirmed">) => Promise<void>;
   sessionExpired: boolean;
 
   /** fire the supportive celebration animation (used after logging a slip) */

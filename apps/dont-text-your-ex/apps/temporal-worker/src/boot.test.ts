@@ -22,7 +22,7 @@ describe("DTYE Temporal boot wiring", () => {
       }),
     ).resolves.toEqual({ worker: "ready" });
 
-    expect(scheduleQueues).toEqual(["main", "main", "main", "main"]);
+    expect(scheduleQueues).toEqual(["main", "main", "main", "main", "main"]);
     expect(createWorker).toHaveBeenCalledWith({
       namespace: "dont-text-your-ex",
       taskQueue: "main",

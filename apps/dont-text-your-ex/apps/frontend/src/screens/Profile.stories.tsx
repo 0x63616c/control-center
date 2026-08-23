@@ -16,6 +16,7 @@ const me: MeDTO = {
 };
 
 const signOut = fn<() => Promise<void>>();
+const deleteAccount = fn<AppCtx["deleteAccount"]>();
 const ctx: AppCtx<RouteFor<"profile">> = {
   me,
   setMe: fn(),
@@ -25,6 +26,7 @@ const ctx: AppCtx<RouteFor<"profile">> = {
   tab: fn(),
   signIn: fn(),
   signOut,
+  deleteAccount,
   sessionExpired: false,
   fireBurst: fn(),
   hasPendingReport: false,
@@ -35,6 +37,9 @@ const services: ProfileServices = {
   jars: fn(async () => []),
   setShareStreak: fn(async () => ({ ok: true as const })),
   getNativeAppInfo: fn(async () => null),
+  isNativePlatform: fn(() => false),
+  createAppleSignInAttempt: fn(),
+  authorizeAppleSignIn: fn(),
 };
 
 const meta = {
@@ -69,5 +74,46 @@ export const FailedLogoutCanRetry: Story = {
 
     await userEvent.click(canvas.getByRole("button", { name: "Try signing out again" }));
     await waitFor(() => expect(signOut).toHaveBeenCalledTimes(2));
+  },
+};
+
+export const ConfirmedDeletionUsesFreshAppleAuthorization: Story = {
+  args: {
+    services: {
+      ...services,
+      isNativePlatform: fn(() => true),
+      createAppleSignInAttempt: fn(async () => ({
+        request: { attemptId: "attempt_test", state: "state_test", nonce: "hashed_nonce" },
+        rawNonce: "raw_nonce",
+      })),
+      authorizeAppleSignIn: fn(async () => ({
+        identityToken: "identity-token",
+        authorizationCode: "fresh-authorization-code",
+        user: "apple-user",
+        attemptId: "attempt_test",
+        state: "state_test",
+      })),
+    },
+  },
+  play: async ({ canvasElement }) => {
+    deleteAccount.mockReset().mockResolvedValueOnce();
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "Delete account" }));
+    await expect(
+      canvas.getByText(/shared jar stays with its earliest active member/i),
+    ).toBeVisible();
+    const permanentButton = canvas.getByRole("button", {
+      name: "Delete my account permanently",
+    });
+    await expect(permanentButton).toBeDisabled();
+    await userEvent.click(canvas.getByRole("checkbox", { name: /cannot be recovered/i }));
+    await userEvent.click(permanentButton);
+    await waitFor(() =>
+      expect(deleteAccount).toHaveBeenCalledWith({
+        authorizationCode: "fresh-authorization-code",
+        identityToken: "identity-token",
+        nonce: "raw_nonce",
+      }),
+    );
   },
 };

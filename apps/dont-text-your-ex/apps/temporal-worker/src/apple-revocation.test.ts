@@ -71,4 +71,14 @@ describe("Apple revocation gateway", () => {
     });
     await expect(transient.revokeRefreshToken("token")).rejects.toThrow(/temporarily unavailable/);
   });
+
+  it("treats Apple's invalid-token response as an already-satisfied revocation", async () => {
+    const gateway = createAppleRevocationGateway({
+      clientId: "client",
+      clientSecret: async () => "secret",
+      fetch: vi.fn(async () => Response.json({ error: "invalid_token" }, { status: 400 })) as never,
+    });
+
+    await expect(gateway.revokeRefreshToken("already-revoked-token")).resolves.toBeUndefined();
+  });
 });

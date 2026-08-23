@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 import { api, type Env } from "./api";
 import { authMiddleware } from "./auth";
 import { createInviteProbeLimiter, inviteProbeRateLimit } from "./invite-rate-limit";
+import * as store from "./store";
 
 const log = createLogger({ service: "dont-text-your-ex-api" });
 
@@ -48,6 +49,14 @@ export function buildApp(): Hono<Env> {
   );
 
   app.use("/api/*", authMiddleware);
+  app.use("/api/*", async (c, next) => {
+    const userId = c.get("userId");
+    const method = c.req.method;
+    const isDeletionRequest = method === "DELETE" && c.req.path === "/api/me";
+    if (!userId || isDeletionRequest) return next();
+    const guarded = await store.withActiveAccountRequest(userId, next);
+    if (!guarded.active) return c.json({ error: "not_authenticated" }, 401);
+  });
   app.use("/api/jars/code/*", inviteProbeRateLimit(inviteLimiter));
   app.use("/api/jars/join", inviteProbeRateLimit(inviteLimiter));
   app.route("/api", api);

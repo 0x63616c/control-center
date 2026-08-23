@@ -16,6 +16,7 @@ export { type CronObservation, type CronOutcome, observeCronRun } from "./cron";
 export {
   type DtyeOutboxDispatchOutcome,
   type DtyeOutboxSnapshot,
+  observeDtyeAccountDeletionErasureStuck,
   observeDtyeOutboxDispatch,
   observeDtyeOutboxRecoverySuccess,
   observeDtyeOutboxSnapshot,

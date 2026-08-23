@@ -21,7 +21,14 @@ import {
 import { DomainTransactionRunner } from "../../api/src/domain-transaction";
 import { PostgresOutbox } from "../../api/src/outbox";
 import { PostgresRescueStore } from "../../api/src/rescue-store";
-import { createAccountDeletionActivities } from "./account-deletion";
+import {
+  createFileRestoreTombstoneService,
+  parseRestoreTombstoneKeyring,
+} from "../../api/src/restore-tombstone";
+import {
+  createAccountDeletionActivities,
+  TemporalAccountDeletionWorkflowCleanupGateway,
+} from "./account-deletion";
 import { createDtyeActivities } from "./activities";
 import { createAppleClientSecret, createAppleRevocationGateway } from "./apple-revocation";
 import { prepareTemporalWorker } from "./boot";
@@ -43,6 +50,7 @@ import {
   TemporalClientWorkflowGateway,
   TemporalWorkflowDispatcher,
 } from "./temporal-workflow-dispatcher";
+import { PostgresTemporalWorkflowFence } from "./workflow-dispatch-fence";
 
 const logger = createLogger({ service: "dont-text-your-ex-temporal-worker" });
 const workflowsPath = new URL("./workflows.ts", import.meta.url).pathname;
@@ -76,7 +84,13 @@ async function main(): Promise<void> {
     createAccountDeletionCipher(
       parseAccountDeletionKeyring(JSON.parse(config.accountDeletionKeyring)),
     ),
+    createFileRestoreTombstoneService({
+      directory: config.erasureJournalDirectory,
+      hmacKeys: parseRestoreTombstoneKeyring(JSON.parse(config.restoreTombstoneHmacKeyring)),
+      signingKeys: parseRestoreTombstoneKeyring(JSON.parse(config.restoreTombstoneSigningKeyring)),
+    }),
   );
+  const workflowFence = new PostgresTemporalWorkflowFence(pool);
   const apnsClients = {
     production: createApnsClient({
       authorization: apnsAuthorization,
@@ -95,6 +109,7 @@ async function main(): Promise<void> {
     outbox: new PostgresOutbox(pool),
     dispatcher: new TemporalWorkflowDispatcher(
       registeredTemporalEventHandlers(temporalGateway, WORKFLOW_TYPES),
+      workflowFence,
     ),
     sessions: new PostgresSessionMaintenanceStore(pool),
     streakMilestones: createStreakMilestoneActivities(
@@ -125,6 +140,9 @@ async function main(): Promise<void> {
             keyContent: config.siwaKeyContent,
           }),
       }),
+      workflows: new TemporalAccountDeletionWorkflowCleanupGateway(client),
+      observeErasureStuck: platformDtyeOperationsObserver.accountDeletionErasureStuck,
+      workflowFence,
     }),
   });
   const worker = await prepareTemporalWorker({

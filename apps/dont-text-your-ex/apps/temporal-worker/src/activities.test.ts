@@ -46,6 +46,7 @@ describe("outbox dispatch activity", () => {
         outboxSnapshot: () => undefined,
         outboxDispatch: () => undefined,
         outboxRecoverySucceeded: () => undefined,
+        accountDeletionErasureStuck: () => undefined,
         sessionPurge: () => undefined,
       },
       outboxSnapshot: {
@@ -105,6 +106,7 @@ describe("outbox dispatch activity", () => {
         outboxSnapshot: () => undefined,
         outboxDispatch: () => undefined,
         outboxRecoverySucceeded: () => undefined,
+        accountDeletionErasureStuck: () => undefined,
         sessionPurge: () => undefined,
       },
       outboxSnapshot: {

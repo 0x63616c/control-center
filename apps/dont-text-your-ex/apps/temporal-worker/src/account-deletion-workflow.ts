@@ -1,4 +1,4 @@
-import { defineQuery, proxyActivities, setHandler } from "@temporalio/workflow";
+import { condition, defineQuery, proxyActivities, setHandler } from "@temporalio/workflow";
 import {
   type AccountDeletionWorkflowInput,
   AccountDeletionWorkflowInputSchema,
@@ -15,14 +15,31 @@ export const accountDeletionStateQuery =
   defineQuery<AccountDeletionWorkflowState>("accountDeletionState");
 
 const localActivities = proxyActivities<
-  Pick<AccountDeletionActivities, "eraseAccountLocally" | "finishAccountDeletion">
+  Pick<
+    AccountDeletionActivities,
+    "eraseAccountLocally" | "finishAccountDeletion" | "recordAccountDeletionErasureStuck"
+  >
 >({
   startToCloseTimeout: "2 minutes",
   retry: {
     initialInterval: "2 seconds",
     backoffCoefficient: 2,
     maximumInterval: "1 minute",
-    maximumAttempts: 20,
+  },
+});
+
+const cleanupActivities = proxyActivities<
+  Pick<
+    AccountDeletionActivities,
+    "terminateAssociatedWorkflows" | "deleteAssociatedWorkflowHistories"
+  >
+>({
+  startToCloseTimeout: "2 minutes",
+  scheduleToCloseTimeout: "24 hours",
+  retry: {
+    initialInterval: "2 seconds",
+    backoffCoefficient: 2,
+    maximumInterval: "15 minutes",
   },
 });
 
@@ -44,7 +61,26 @@ export async function AccountDeletionWorkflow(
   let state: AccountDeletionWorkflowState = "erasing";
   setHandler(accountDeletionStateQuery, () => state);
 
-  await localActivities.eraseAccountLocally({ deletionRequestId: input.deletionRequestId });
+  await cleanupActivities.terminateAssociatedWorkflows({
+    deletionRequestId: input.deletionRequestId,
+  });
+  let locallyErased = false;
+  const localErasure = localActivities
+    .eraseAccountLocally({ deletionRequestId: input.deletionRequestId })
+    .then((result) => {
+      locallyErased = true;
+      return result;
+    });
+  const completedInsideTarget = await condition(() => locallyErased, "15 minutes");
+  if (!completedInsideTarget) {
+    await localActivities.recordAccountDeletionErasureStuck({
+      deletionRequestId: input.deletionRequestId,
+    });
+  }
+  await localErasure;
+  await cleanupActivities.terminateAssociatedWorkflows({
+    deletionRequestId: input.deletionRequestId,
+  });
   state = "revoking_apple";
   let terminal: "complete" | "manual_action_required";
   try {
@@ -58,6 +94,9 @@ export async function AccountDeletionWorkflow(
   await localActivities.finishAccountDeletion({
     deletionRequestId: input.deletionRequestId,
     state: terminal,
+  });
+  await cleanupActivities.deleteAssociatedWorkflowHistories({
+    deletionRequestId: input.deletionRequestId,
   });
   state = terminal;
   return terminal;

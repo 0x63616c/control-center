@@ -18,6 +18,11 @@ const valid = {
   APPLE_BUNDLE_ID: "co.worldwidewebb.textyourex",
   ACCOUNT_DELETION_KEYRING:
     '{"activeKeyId":"v1","keys":{"v1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}',
+  RESTORE_TOMBSTONE_HMAC_KEYRING:
+    '{"activeKeyId":"v1","keys":{"v1":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="}}',
+  RESTORE_TOMBSTONE_SIGNING_KEYRING:
+    '{"activeKeyId":"v1","keys":{"v1":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}}',
+  ERASURE_JOURNAL_DIR: "/mnt/erasure-journal",
 };
 
 describe("DTYE worker config", () => {
@@ -47,11 +52,19 @@ describe("DTYE worker config", () => {
   });
 
   test("fails before connecting when account deletion secrets are absent", () => {
-    expect(() => parseTemporalWorkerConfig({ ...valid, SIWA_KEY_CONTENT: undefined })).toThrow(
-      /account deletion secrets must be configured/,
-    );
-    expect(() =>
-      parseTemporalWorkerConfig({ ...valid, ACCOUNT_DELETION_KEYRING: undefined }),
-    ).toThrow(/account deletion secrets must be configured/);
+    for (const key of [
+      "SIWA_KEY_ID",
+      "SIWA_TEAM_ID",
+      "SIWA_KEY_CONTENT",
+      "APPLE_BUNDLE_ID",
+      "ACCOUNT_DELETION_KEYRING",
+      "RESTORE_TOMBSTONE_HMAC_KEYRING",
+      "RESTORE_TOMBSTONE_SIGNING_KEYRING",
+      "ERASURE_JOURNAL_DIR",
+    ] as const) {
+      expect(() => parseTemporalWorkerConfig({ ...valid, [key]: undefined }), key).toThrow(
+        /account deletion secrets must be configured/,
+      );
+    }
   });
 });

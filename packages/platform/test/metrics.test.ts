@@ -8,6 +8,7 @@ import {
   metricsRegistry,
   OTHER_LABEL,
   observeCronRun,
+  observeDtyeAccountDeletionErasureStuck,
   observeDtyeOutboxDispatch,
   observeDtyeOutboxRecoverySuccess,
   observeDtyeOutboxSnapshot,
@@ -171,6 +172,7 @@ describe("DTYE Temporal helpers", () => {
     observeDtyeOutboxDispatch({ outcome: "permanent_failure" });
     observeDtyeOutboxDispatch({ outcome: "accepted", latencySeconds: 4.2 });
     observeDtyeOutboxRecoverySuccess(1_700_000_000_000);
+    observeDtyeAccountDeletionErasureStuck();
     observeDtyeSessionPurge({
       outcome: "success",
       deleted: 12,
@@ -191,6 +193,7 @@ describe("DTYE Temporal helpers", () => {
       ),
     ).toBe(1_700_000_000);
     expect(seriesValue(text, "www_dtye_session_purge_deleted_total")).toBe(12);
+    expect(seriesValue(text, "www_dtye_account_deletion_erasure_stuck_total")).toBe(1);
     expect(text).not.toMatch(/user_id|jar_id|event_id|token=/);
   });
 });

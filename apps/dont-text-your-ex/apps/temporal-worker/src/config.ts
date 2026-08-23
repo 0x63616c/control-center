@@ -20,6 +20,9 @@ export interface TemporalWorkerConfig {
   readonly siwaKeyContent: string;
   readonly appleBundleId: string;
   readonly accountDeletionKeyring: string;
+  readonly restoreTombstoneHmacKeyring: string;
+  readonly restoreTombstoneSigningKeyring: string;
+  readonly erasureJournalDirectory: string;
 }
 
 type RawTemporalWorkerConfig = {
@@ -38,6 +41,9 @@ type RawTemporalWorkerConfig = {
   readonly SIWA_KEY_CONTENT?: string;
   readonly APPLE_BUNDLE_ID?: string;
   readonly ACCOUNT_DELETION_KEYRING?: string;
+  readonly RESTORE_TOMBSTONE_HMAC_KEYRING?: string;
+  readonly RESTORE_TOMBSTONE_SIGNING_KEYRING?: string;
+  readonly ERASURE_JOURNAL_DIR?: string;
 };
 
 export function parseTemporalWorkerConfig(env: RawTemporalWorkerConfig): TemporalWorkerConfig {
@@ -55,7 +61,10 @@ export function parseTemporalWorkerConfig(env: RawTemporalWorkerConfig): Tempora
     !env.SIWA_TEAM_ID ||
     !env.SIWA_KEY_CONTENT ||
     !env.APPLE_BUNDLE_ID ||
-    !env.ACCOUNT_DELETION_KEYRING
+    !env.ACCOUNT_DELETION_KEYRING ||
+    !env.RESTORE_TOMBSTONE_HMAC_KEYRING ||
+    !env.RESTORE_TOMBSTONE_SIGNING_KEYRING ||
+    !env.ERASURE_JOURNAL_DIR
   ) {
     throw new Error("Don't Text Your Ex account deletion secrets must be configured");
   }
@@ -75,6 +84,9 @@ export function parseTemporalWorkerConfig(env: RawTemporalWorkerConfig): Tempora
     siwaKeyContent: env.SIWA_KEY_CONTENT,
     appleBundleId: env.APPLE_BUNDLE_ID,
     accountDeletionKeyring: env.ACCOUNT_DELETION_KEYRING,
+    restoreTombstoneHmacKeyring: env.RESTORE_TOMBSTONE_HMAC_KEYRING,
+    restoreTombstoneSigningKeyring: env.RESTORE_TOMBSTONE_SIGNING_KEYRING,
+    erasureJournalDirectory: env.ERASURE_JOURNAL_DIR,
   };
 }
 
@@ -95,6 +107,9 @@ export function temporalWorkerConfig(): TemporalWorkerConfig {
     "SIWA_KEY_CONTENT",
     "APPLE_BUNDLE_ID",
     "ACCOUNT_DELETION_KEYRING",
+    "RESTORE_TOMBSTONE_HMAC_KEYRING",
+    "RESTORE_TOMBSTONE_SIGNING_KEYRING",
+    "ERASURE_JOURNAL_DIR",
   );
   const secretFile = (name: string): string | undefined => {
     try {
@@ -122,5 +137,12 @@ export function temporalWorkerConfig(): TemporalWorkerConfig {
     APPLE_BUNDLE_ID: env.APPLE_BUNDLE_ID ?? "co.worldwidewebb.textyourex",
     ACCOUNT_DELETION_KEYRING:
       env.ACCOUNT_DELETION_KEYRING ?? accountDeletionSecretFile("ACCOUNT_DELETION_KEYRING"),
+    RESTORE_TOMBSTONE_HMAC_KEYRING:
+      env.RESTORE_TOMBSTONE_HMAC_KEYRING ??
+      accountDeletionSecretFile("RESTORE_TOMBSTONE_HMAC_KEYRING"),
+    RESTORE_TOMBSTONE_SIGNING_KEYRING:
+      env.RESTORE_TOMBSTONE_SIGNING_KEYRING ??
+      accountDeletionSecretFile("RESTORE_TOMBSTONE_SIGNING_KEYRING"),
+    ERASURE_JOURNAL_DIR: env.ERASURE_JOURNAL_DIR,
   });
 }

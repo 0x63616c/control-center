@@ -55,37 +55,42 @@ export function createNotificationActivities(deps: {
       return { rotated };
     },
     async deliverNotification({ deliveryId, finalAttempt }) {
-      const delivery = await deps.store.loadDelivery(deliveryId);
-      if (!delivery) return { kind: "already_terminal", state: "suppressed" };
-      if (delivery.kind === "terminal") return { kind: "already_terminal", state: delivery.state };
-      const outcome = await deps.apnsClient(delivery.delivery.environment).send({
-        deviceToken: delivery.delivery.deviceToken,
-        notificationId: delivery.delivery.notificationId,
-        expiresAtMs: delivery.delivery.expiresAtMs,
-      });
-      if (outcome.kind === "retry") {
-        const persistedOutcome: PersistedDeliveryOutcome = finalAttempt
-          ? { kind: "permanent_notification", reason: "retry_exhausted" }
-          : outcome;
-        await deps.store.recordDeliveryOutcome(deliveryId, persistedOutcome);
-        deps.logger.warn(
-          {
-            deliveryId,
-            notificationId: delivery.delivery.notificationId,
-            outcome: persistedOutcome.kind,
-          },
-          finalAttempt
-            ? "notification delivery retries exhausted"
-            : "notification delivery deferred",
+      const result = await deps.store.withDeliveryAccountFence(deliveryId, async () => {
+        const delivery = await deps.store.loadDelivery(deliveryId);
+        if (!delivery) return { kind: "already_terminal" as const, state: "suppressed" as const };
+        if (delivery.kind === "terminal") {
+          return { kind: "already_terminal" as const, state: delivery.state };
+        }
+        const outcome = await deps.apnsClient(delivery.delivery.environment).send({
+          deviceToken: delivery.delivery.deviceToken,
+          notificationId: delivery.delivery.notificationId,
+          expiresAtMs: delivery.delivery.expiresAtMs,
+        });
+        if (outcome.kind === "retry") {
+          const persistedOutcome: PersistedDeliveryOutcome = finalAttempt
+            ? { kind: "permanent_notification", reason: "retry_exhausted" }
+            : outcome;
+          await deps.store.recordDeliveryOutcome(deliveryId, persistedOutcome);
+          deps.logger.warn(
+            {
+              deliveryId,
+              notificationId: delivery.delivery.notificationId,
+              outcome: persistedOutcome.kind,
+            },
+            finalAttempt
+              ? "notification delivery retries exhausted"
+              : "notification delivery deferred",
+          );
+          return finalAttempt ? persistedOutcome : outcome;
+        }
+        await deps.store.recordDeliveryOutcome(deliveryId, outcome);
+        deps.logger.info(
+          { deliveryId, notificationId: delivery.delivery.notificationId, outcome: outcome.kind },
+          "notification delivery completed",
         );
-        return finalAttempt ? persistedOutcome : outcome;
-      }
-      await deps.store.recordDeliveryOutcome(deliveryId, outcome);
-      deps.logger.info(
-        { deliveryId, notificationId: delivery.delivery.notificationId, outcome: outcome.kind },
-        "notification delivery completed",
-      );
-      return outcome;
+        return outcome;
+      });
+      return result ?? { kind: "already_terminal", state: "suppressed" };
     },
   };
 }
