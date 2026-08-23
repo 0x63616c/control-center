@@ -9,8 +9,8 @@ deployment, real Apple-token revocation, TestFlight, or physical-device proof.
 
 | Scope | Result |
 |---|---|
-| API unit and real-Postgres suite | PASS — 18 files, 152 tests |
-| Temporal worker unit, real-Postgres, and real Temporal suite | PASS — 36 files, 125 tests |
+| API unit and real-Postgres suite | PASS — 18 files, 159 tests |
+| Temporal worker unit, real-Postgres, and real Temporal suite | PASS — 36 files, 130 tests |
 | Frontend unit suite | PASS — 11 files, 47 tests |
 | Profile Storybook browser suite | PASS — 3 tests in Chromium |
 | Notifications package | PASS — 5 files, 15 tests |
@@ -20,6 +20,7 @@ deployment, real Apple-token revocation, TestFlight, or physical-device proof.
 | Frontend production build and Capacitor iOS sync | PASS |
 | Fastlane release entitlements and metadata checks | PASS — 4 and 3 checks |
 | Unsigned iOS simulator build | PASS — `BUILD SUCCEEDED` |
+| Independent standards and specification re-review | PASS — no hard gaps |
 
 The real Temporal integration uses the product namespace and task queue contract,
 whose queue name is exactly `main`. The end-to-end tracer runs the real Postgres
@@ -64,8 +65,12 @@ fresh re-registration as a new empty identity.
 
 ## Restore and retention proof
 
-The deletion journal is signed and encrypted with versioned keyrings. Tests prove
-tamper rejection, restore replay and rollback reconciliation against Postgres.
+The deletion journal is signed and pseudonymized with versioned keyrings. A
+durable write-ahead intent closes the cross-store crash window: restore replay
+honors a signed intent whether a crash lands immediately before or after the
+database commit, while a normal observed rollback discards it. Tests prove intent
+staging/promotion/discard, tamper rejection, restore replay, crash-retry duplicate
+handling, and rollback reconciliation against Postgres.
 Operational deletion rows and journals are purged only after retention has elapsed
 and every inventoried Temporal history has been deleted. A live isolated restore
 rehearsal and production key availability remain deployment proof obligations.
@@ -81,7 +86,10 @@ The reviewed flow exposes **Delete account** in Profile, explains shared- and
 sole-member-jar consequences, and requires an irreversible acknowledgement before
 the destructive action becomes available. The fresh Sign in with Apple path sends
 the authorization code, identity token, and nonce together; the API verifies the
-nonce and exact Apple subject before accepting deletion.
+nonce and exact Apple subject before accepting deletion. The encrypted expected
+subject travels only with revocation material, and the worker verifies that the
+signed identity token returned by Apple’s code exchange has that same subject
+before saving or revoking the refresh token.
 
 Visual review passed for destructive affordance, hierarchy, spacing, visible
 consequence copy, and disabled-state distinction. The narrow capture has a small
@@ -91,7 +99,7 @@ production-device overflow evidence.
 
 ## Remaining proof boundary
 
-P03 remains `IN PROGRESS` until this change is reviewed, merged, passes immutable
+P03 remains `IN PROGRESS` until this reviewed change is merged, passes immutable
 merge-SHA CI, deploys to the `DontTextYourEx` production namespace, and is verified
 against the live database, Temporal namespace, public API, and monitoring. The
 production secret manifest currently lacks the dedicated Sign in with Apple key ID

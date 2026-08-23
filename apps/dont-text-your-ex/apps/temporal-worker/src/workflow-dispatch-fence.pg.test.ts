@@ -30,9 +30,9 @@ describe.skipIf(!HAS_DB).sequential("Postgres Temporal workflow deletion fence",
       INSERT INTO account_deletion_request (id,user_id,state,created_at,updated_at)
       VALUES ('del_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','usr_fenced','accepted',2,2);
       INSERT INTO account_deletion_cleanup_item
-        (id,deletion_request_id,workflow_id,state,updated_at)
+        (deletion_request_id,workflow_id,state,updated_at)
       VALUES
-        ('aci_fenced','del_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        ('del_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
          'notification/ntf_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','pending',2);
     `);
     const fence = new PostgresTemporalWorkflowFence(pool);

@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 describe("restore tombstone journal", () => {
-  it("atomically publishes a signed pseudonymous record without the raw user id", async () => {
+  it("durably stages and atomically publishes a signed pseudonymous deletion intent", async () => {
     const directory = await mkdtemp(join(tmpdir(), "dtye-tombstone-"));
     temporaryDirectories.push(directory);
     const hmacKeys = parseRestoreTombstoneKeyring({
@@ -33,11 +33,18 @@ describe("restore tombstone journal", () => {
     const userId = UserIdSchema.parse("usr_privatepersonidentifier");
 
     const record = service.prepare({ deletionRequestId, userId, createdAt: 1_000 });
+    await service.stageIntent(record);
+
+    const intent = await readFile(join(directory, `${deletionRequestId}.intent`), "utf8");
+    expect(intent).not.toContain(userId);
+    await expect(loadFileRestoreTombstones({ directory, signingKeys })).resolves.toEqual([record]);
+
     await service.publish(record);
 
     const serialized = await readFile(join(directory, `${deletionRequestId}.json`), "utf8");
     expect(serialized).not.toContain(userId);
     expect(verifyRestoreTombstoneRecord(JSON.parse(serialized), signingKeys)).toEqual(record);
+    expect(await readdir(directory)).toEqual([`${deletionRequestId}.json`]);
     expect(record.expiresAt).toBe(1_000 + 31 * 24 * 60 * 60 * 1000);
   });
 
@@ -118,6 +125,30 @@ describe("restore tombstone journal", () => {
     await expect(loadFileRestoreTombstones({ directory, signingKeys: keys })).rejects.toThrow(
       "restore tombstone signature is invalid",
     );
+  });
+
+  it("discards a staged intent after a normal transaction rollback", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "dtye-tombstone-"));
+    temporaryDirectories.push(directory);
+    const keys = parseRestoreTombstoneKeyring({
+      activeKeyId: "v1",
+      keys: { v1: Buffer.alloc(32, 27).toString("base64") },
+    });
+    const service = createFileRestoreTombstoneService({
+      directory,
+      hmacKeys: keys,
+      signingKeys: keys,
+    });
+    const record = service.prepare({
+      deletionRequestId: AccountDeletionIdSchema.parse("del_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
+      userId: UserIdSchema.parse("usr_private"),
+      createdAt: 1_000,
+    });
+
+    await service.stageIntent(record);
+    await service.discardIntent(record);
+
+    await expect(loadFileRestoreTombstones({ directory, signingKeys: keys })).resolves.toEqual([]);
   });
 
   it("rejects an unavailable HMAC key version", () => {

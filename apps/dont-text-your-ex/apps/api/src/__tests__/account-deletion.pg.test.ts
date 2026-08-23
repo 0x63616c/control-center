@@ -6,6 +6,7 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AccountDeletionIdSchema,
+  NotificationDeliveryIdSchema,
   NotificationIdSchema,
   PushInstallationIdSchema,
 } from "../../../../contracts";
@@ -18,7 +19,7 @@ import {
 import { completeAppleAccountSignIn } from "../apple-auth";
 import { pool } from "../db/index";
 import { runMigrations } from "../db/migrate";
-import { DomainTransactionRunner } from "../domain-transaction";
+import { AmbiguousDomainTransactionError, DomainTransactionRunner } from "../domain-transaction";
 import { PostgresOutbox } from "../outbox";
 import { replayRestoreTombstones } from "../restore-replay";
 import {
@@ -51,6 +52,63 @@ afterAll(async () => {
 });
 
 describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
+  it("holds the account fence until concurrent session creation commits", async () => {
+    const user = await store.createUser({ name: "Session Race", authProvider: "apple" });
+    const blocker = await pool.connect();
+    const triggerLock = 86_753_091;
+    await blocker.query("SELECT pg_advisory_lock($1)", [triggerLock]);
+    await pool.query(`
+      CREATE FUNCTION block_session_insert_for_deletion_test() RETURNS trigger AS $$
+      BEGIN
+        PERFORM pg_advisory_xact_lock(${triggerLock});
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER block_session_insert_for_deletion_test
+      BEFORE INSERT ON sessions FOR EACH ROW
+      EXECUTE FUNCTION block_session_insert_for_deletion_test();
+    `);
+
+    try {
+      const session = store.createSession(user.id);
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const waiting = await pool.query(
+          `SELECT 1 FROM pg_stat_activity
+           WHERE datname=current_database() AND wait_event='advisory'
+             AND query LIKE 'INSERT INTO sessions%'`,
+        );
+        if (waiting.rowCount) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        if (attempt === 99) throw new Error("session insert did not reach the test barrier");
+      }
+
+      const deletions = new PostgresAccountDeletionStore(
+        pool,
+        new DomainTransactionRunner({ pool }),
+      );
+      let deletionSettled = false;
+      const deletion = deletions.request({ userId: user.id }).finally(() => {
+        deletionSettled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(deletionSettled).toBe(false);
+
+      await blocker.query("SELECT pg_advisory_unlock($1)", [triggerLock]);
+      await expect(session).resolves.toMatch(/^sess_/);
+      await expect(deletion).resolves.toMatchObject({ status: "accepted" });
+      expect(
+        (await pool.query("SELECT 1 FROM sessions WHERE user_id=$1", [user.id])).rowCount,
+      ).toBe(0);
+    } finally {
+      await blocker.query("SELECT pg_advisory_unlock($1)", [triggerLock]).catch(() => undefined);
+      blocker.release();
+      await pool.query(`
+        DROP TRIGGER IF EXISTS block_session_insert_for_deletion_test ON sessions;
+        DROP FUNCTION IF EXISTS block_session_insert_for_deletion_test();
+      `);
+    }
+  });
+
   it("serializes in-flight mutations before deletion and rejects stale authenticated writes", async () => {
     const user = await store.createUser({ name: "Mutation Race", authProvider: "apple" });
     const token = await store.createSession(user.id);
@@ -172,6 +230,48 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
     expect(send).toHaveBeenCalledOnce();
   });
 
+  it("rejects an invalid persisted notification recipient at the account fence boundary", async () => {
+    const notificationStore = createNotificationStore(
+      pool,
+      createTokenCipher(
+        parseTokenKeyring({
+          activeKeyId: "test",
+          keys: { test: Buffer.alloc(32, 7).toString("base64") },
+        }),
+      ),
+    );
+    const deliveryId = NotificationDeliveryIdSchema.parse("ndl_cccccccccccccccccccccccccccccccc");
+    await pool.query(
+      `INSERT INTO users (id,name,auth_provider,created_at)
+       VALUES ('malformed-user-id','Malformed Recipient','demo',1)`,
+    );
+    await pool.query(
+      `INSERT INTO push_device
+         (installation_id,user_id,platform,environment,token_ciphertext,token_nonce,
+          token_key_id,token_sha256,app_version,app_build,active,last_registered_at)
+       VALUES ('dev_malformed','malformed-user-id','ios','sandbox','ciphertext','nonce',
+               'test','malformed-hash','1.0','25',TRUE,1)`,
+    );
+    await pool.query(
+      `INSERT INTO user_notification
+         (id,recipient_user_id,category,dedupe_key,target_type,message_key,created_at)
+       VALUES ('ntf_cccccccccccccccccccccccccccccccc','malformed-user-id','report',
+               'malformed-recipient','activity','report.pending',1)`,
+    );
+    await pool.query(
+      `INSERT INTO notification_delivery
+         (id,notification_id,installation_id,status,created_at,updated_at)
+       VALUES ($1,'ntf_cccccccccccccccccccccccccccccccc','dev_malformed','pending',1,1)`,
+      [deliveryId],
+    );
+    const effect = vi.fn(async () => undefined);
+
+    await expect(notificationStore.withDeliveryAccountFence(deliveryId, effect)).rejects.toThrow(
+      "invalid UserId",
+    );
+    expect(effect).not.toHaveBeenCalled();
+  });
+
   it("persists a fresh Apple authorization code only as request-bound ciphertext", async () => {
     const user = await store.createUser({ name: "Credential User", authProvider: "apple" });
     const clock = () => 1_787_500_000_000;
@@ -191,30 +291,40 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
     const receipt = await deletions.request({
       userId: user.id,
       authorizationCode: "single-use-authorization-code",
+      appleSubject: "apple-subject",
     });
 
-    await expect(deletions.loadAuthorizationCode(receipt.deletionRequestId)).resolves.toBe(
-      "single-use-authorization-code",
-    );
+    await expect(
+      deletions.loadAppleRevocationCredential(receipt.deletionRequestId),
+    ).resolves.toEqual({
+      authorizationCode: "single-use-authorization-code",
+      expectedSubject: "apple-subject",
+    });
     const persisted = await pool.query(
-      "SELECT authorization_code_ciphertext,authorization_code_nonce,authorization_code_key_id FROM account_deletion_request WHERE id=$1",
+      `SELECT authorization_code_ciphertext,authorization_code_nonce,authorization_code_key_id,
+              apple_subject_ciphertext,apple_subject_nonce,apple_subject_key_id
+       FROM account_deletion_request WHERE id=$1`,
       [receipt.deletionRequestId],
     );
     expect(JSON.stringify(persisted.rows)).not.toContain("single-use-authorization-code");
+    expect(JSON.stringify(persisted.rows)).not.toContain("apple-subject");
 
     await deletions.saveRefreshToken(receipt.deletionRequestId, "durable-refresh-token");
-    await expect(deletions.loadAuthorizationCode(receipt.deletionRequestId)).resolves.toBeNull();
+    await expect(
+      deletions.loadAppleRevocationCredential(receipt.deletionRequestId),
+    ).resolves.toBeNull();
     await expect(deletions.loadRefreshToken(receipt.deletionRequestId)).resolves.toBe(
       "durable-refresh-token",
     );
     const refreshed = await pool.query(
-      `SELECT state,authorization_code_ciphertext,refresh_token_ciphertext
+      `SELECT state,authorization_code_ciphertext,apple_subject_ciphertext,refresh_token_ciphertext
        FROM account_deletion_request WHERE id=$1`,
       [receipt.deletionRequestId],
     );
     expect(refreshed.rows[0]).toMatchObject({
       state: "apple_revocation_pending",
       authorization_code_ciphertext: null,
+      apple_subject_ciphertext: null,
       refresh_token_ciphertext: expect.any(String),
     });
     expect(JSON.stringify(refreshed.rows)).not.toContain("durable-refresh-token");
@@ -264,6 +374,7 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
     const receipt = await deletions.request({
       userId: user.id,
       authorizationCode: "must-survive-rollback",
+      appleSubject: "rollback-apple-subject",
     });
     await pool.query(`
       CREATE FUNCTION reject_account_deletion_event_cleanup() RETURNS trigger AS $$
@@ -283,9 +394,12 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
       await expect(deletions.load(receipt.deletionRequestId)).resolves.toMatchObject({
         state: "accepted",
       });
-      await expect(deletions.loadAuthorizationCode(receipt.deletionRequestId)).resolves.toBe(
-        "must-survive-rollback",
-      );
+      await expect(
+        deletions.loadAppleRevocationCredential(receipt.deletionRequestId),
+      ).resolves.toEqual({
+        authorizationCode: "must-survive-rollback",
+        expectedSubject: "rollback-apple-subject",
+      });
     } finally {
       await pool.query(`
         DROP TRIGGER IF EXISTS reject_account_deletion_event_cleanup ON domain_event;
@@ -323,8 +437,8 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
     const receipt = await deletions.request({ userId: user.id });
     await pool.query(
       `INSERT INTO account_deletion_cleanup_item
-         (id,deletion_request_id,workflow_id,state,updated_at)
-       VALUES ('aci_associated_history',$1,'report/rpt_associated','terminated',$2)`,
+         (deletion_request_id,workflow_id,state,updated_at)
+       VALUES ($1,'report/rpt_associated','terminated',$2)`,
       [receipt.deletionRequestId, clock()],
     );
     await deletions.markTerminal(receipt.deletionRequestId, "complete");
@@ -363,7 +477,9 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
         signature: "b".repeat(64),
       }),
       complete: vi.fn(),
+      stageIntent: vi.fn(async () => undefined),
       publish: vi.fn(async () => undefined),
+      discardIntent: vi.fn(async () => undefined),
       remove,
     };
     const deletions = new PostgresAccountDeletionStore(
@@ -394,7 +510,7 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
     expect(
       (await pool.query("SELECT deletion_request_id FROM deletion_restore_tombstone")).rowCount,
     ).toBe(0);
-    expect((await pool.query("SELECT id FROM account_deletion_cleanup_item")).rowCount).toBe(0);
+    expect((await pool.query("SELECT 1 FROM account_deletion_cleanup_item")).rowCount).toBe(0);
   });
 
   it("exposes an authenticated, explicitly confirmed deletion request and rejects the old token", async () => {
@@ -426,10 +542,9 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
     });
     expect(accepted.status).toBe(202);
     const acceptedBody = (await accepted.json()) as Record<string, unknown>;
-    expect(acceptedBody).toMatchObject({
-      status: "accepted",
-      deletionRequestId: expect.stringMatching(/^del_[a-f0-9]{32}$/),
-    });
+    expect(acceptedBody.status).toBe("accepted");
+    expect(typeof acceptedBody.deletionRequestId).toBe("string");
+    expect(acceptedBody.deletionRequestId as string).toMatch(/^del_[a-f0-9]{32}$/);
     const deletionRequestId = AccountDeletionIdSchema.parse(acceptedBody.deletionRequestId);
     const localCipher = createAccountDeletionCipher(
       parseAccountDeletionKeyring({
@@ -443,7 +558,9 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
       Date.now,
       localCipher,
     );
-    await expect(persistedDeletion.loadAuthorizationCode(deletionRequestId)).resolves.toBeNull();
+    await expect(
+      persistedDeletion.loadAppleRevocationCredential(deletionRequestId),
+    ).resolves.toBeNull();
     const tombstone = await pool.query(
       `SELECT user_hmac,key_version,signature,signature_key_version,journal_published_at
        FROM deletion_restore_tombstone WHERE deletion_request_id=$1`,
@@ -481,6 +598,56 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
     expect(response.status).toBe(401);
     expect((await pool.query("SELECT id FROM account_deletion_request")).rowCount).toBe(0);
     await expect(store.userIdForToken(token)).resolves.toBe(user.id);
+  });
+
+  it("accepts Apple-linked deletion through the HTTP route after fresh reauthentication", async () => {
+    const appleSubject = "apple-linked-positive-subject";
+    const user = await store.createUser({
+      name: "Fresh Apple Reauthentication",
+      appleId: appleSubject,
+      authProvider: "apple",
+    });
+    const token = await store.createSession(user.id);
+    const verifier = vi.fn(async () => undefined);
+    const response = await buildApp({
+      verifyAppleAccountReauthentication: verifier,
+    }).request("/api/me", {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        confirmed: true,
+        authorizationCode: "fresh-apple-authorization-code",
+        identityToken: "fresh-apple-identity-token",
+        nonce: `nonce_${"a".repeat(48)}`,
+      }),
+    });
+
+    expect(response.status).toBe(202);
+    expect(verifier).toHaveBeenCalledWith({
+      identityToken: "fresh-apple-identity-token",
+      nonce: `nonce_${"a".repeat(48)}`,
+      expectedSubject: appleSubject,
+    });
+    const body = (await response.json()) as { deletionRequestId: unknown };
+    const deletionRequestId = AccountDeletionIdSchema.parse(body.deletionRequestId);
+    const persistedDeletion = new PostgresAccountDeletionStore(
+      pool,
+      new DomainTransactionRunner({ pool }),
+      Date.now,
+      createAccountDeletionCipher(
+        parseAccountDeletionKeyring({
+          activeKeyId: "local",
+          keys: { local: Buffer.alloc(32, 11).toString("base64") },
+        }),
+      ),
+    );
+    await expect(
+      persistedDeletion.loadAppleRevocationCredential(deletionRequestId),
+    ).resolves.toEqual({
+      authorizationCode: "fresh-apple-authorization-code",
+      expectedSubject: appleSubject,
+    });
+    await expect(store.userIdForToken(token)).resolves.toBeNull();
   });
 
   it("accepts one opaque deletion request and invalidates every session atomically", async () => {
@@ -601,12 +768,13 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
     ).toBe(0);
   });
 
-  it("does not acknowledge or alter the account when external tombstone publication fails", async () => {
+  it("withholds acknowledgement and republishes the committed tombstone on retry", async () => {
     const user = await store.createUser({ name: "Journal Failure", authProvider: "apple" });
     const token = await store.createSession(user.id);
-    const publish = vi.fn(async () => {
-      throw new Error("journal unavailable");
-    });
+    const publish = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("journal unavailable"))
+      .mockResolvedValue(undefined);
     const deletions = new PostgresAccountDeletionStore(
       pool,
       new DomainTransactionRunner({ pool }),
@@ -625,7 +793,9 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
           signature: "b".repeat(64),
         }),
         complete: vi.fn(),
+        stageIntent: vi.fn(async () => undefined),
         publish,
+        discardIntent: vi.fn(async () => undefined),
         remove: vi.fn(async () => undefined),
       },
     );
@@ -633,20 +803,26 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
     await expect(deletions.request({ userId: user.id })).rejects.toThrow("journal unavailable");
 
     expect(publish).toHaveBeenCalledOnce();
-    expect((await pool.query("SELECT id FROM account_deletion_request")).rowCount).toBe(0);
+    expect((await pool.query("SELECT id FROM account_deletion_request")).rowCount).toBe(1);
     expect(
       (await pool.query("SELECT deletion_request_id FROM deletion_restore_tombstone")).rowCount,
-    ).toBe(0);
+    ).toBe(1);
     expect(
       (await pool.query("SELECT deletion_requested_at FROM users WHERE id=$1", [user.id])).rows[0],
-    ).toEqual({ deletion_requested_at: null });
-    await expect(store.userIdForToken(token)).resolves.toBe(user.id);
+    ).toEqual({ deletion_requested_at: expect.any(String) });
+    await expect(store.userIdForToken(token)).resolves.toBeNull();
+
+    await expect(deletions.request({ userId: user.id })).resolves.toMatchObject({
+      status: "accepted",
+    });
+    expect(publish).toHaveBeenCalledTimes(2);
   });
 
-  it("removes an externally published tombstone when the acceptance transaction rolls back", async () => {
+  it("never publishes an external tombstone when the acceptance transaction rolls back", async () => {
     const user = await store.createUser({ name: "Acceptance Rollback", authProvider: "apple" });
     const token = await store.createSession(user.id);
-    const remove = vi.fn(async () => undefined);
+    const stageIntent = vi.fn(async () => undefined);
+    const discardIntent = vi.fn(async () => undefined);
     const tombstones = {
       prepare: ({
         deletionRequestId,
@@ -666,8 +842,10 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
         signature: "b".repeat(64),
       }),
       complete: vi.fn(),
+      stageIntent,
       publish: vi.fn(async () => undefined),
-      remove,
+      discardIntent,
+      remove: vi.fn(async () => undefined),
     };
     const deletions = new PostgresAccountDeletionStore(
       pool,
@@ -699,9 +877,114 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
         DROP FUNCTION IF EXISTS reject_deletion_acceptance_after_journal();
       `);
     }
-    expect(remove).toHaveBeenCalledOnce();
+    expect(tombstones.publish).not.toHaveBeenCalled();
+    expect(stageIntent).toHaveBeenCalledOnce();
+    expect(discardIntent).toHaveBeenCalledOnce();
     expect((await pool.query("SELECT id FROM account_deletion_request")).rowCount).toBe(0);
     await expect(store.userIdForToken(token)).resolves.toBe(user.id);
+  });
+
+  it("discards an intent created before staging reports failure and rollback is confirmed", async () => {
+    const user = await store.createUser({ name: "Stage Sync Failure", authProvider: "apple" });
+    const token = await store.createSession(user.id);
+    const visibleIntents = new Set<string>();
+    const discardIntent = vi.fn(async (record: { deletionRequestId: string }) => {
+      visibleIntents.delete(record.deletionRequestId);
+    });
+    const deletions = new PostgresAccountDeletionStore(
+      pool,
+      new DomainTransactionRunner({ pool }),
+      Date.now,
+      undefined,
+      {
+        prepare: ({ deletionRequestId, createdAt }) => ({
+          schemaVersion: 1,
+          deletionRequestId,
+          userHmac: "a".repeat(64),
+          hmacKeyVersion: "test",
+          completedAt: null,
+          expiresAt: createdAt + 31 * 24 * 60 * 60 * 1000,
+          signatureVersion: 1,
+          signatureKeyVersion: "test",
+          signature: "b".repeat(64),
+        }),
+        complete: vi.fn(),
+        stageIntent: async (record) => {
+          visibleIntents.add(record.deletionRequestId);
+          throw new Error("intent directory sync failed after rename");
+        },
+        publish: vi.fn(async () => undefined),
+        discardIntent,
+        remove: vi.fn(async () => undefined),
+      },
+    );
+
+    await expect(deletions.request({ userId: user.id })).rejects.toThrow(
+      "intent directory sync failed after rename",
+    );
+
+    expect(discardIntent).toHaveBeenCalledOnce();
+    expect(visibleIntents).toEqual(new Set());
+    expect((await pool.query("SELECT id FROM account_deletion_request")).rowCount).toBe(0);
+    await expect(store.userIdForToken(token)).resolves.toBe(user.id);
+  });
+
+  it("retains the restore intent when COMMIT succeeds but its response is lost", async () => {
+    const user = await store.createUser({ name: "Ambiguous Commit", authProvider: "apple" });
+    const token = await store.createSession(user.id);
+    const stageIntent = vi.fn(async () => undefined);
+    const publish = vi.fn(async () => undefined);
+    const discardIntent = vi.fn(async () => undefined);
+    const ambiguousPool = {
+      connect: async () => {
+        const client = await pool.connect();
+        return {
+          query: async (statement: string, values?: unknown[]) => {
+            if (statement === "COMMIT") {
+              await client.query("COMMIT");
+              throw new Error("commit response lost");
+            }
+            if (statement === "ROLLBACK") throw new Error("connection unavailable");
+            return client.query(statement, values);
+          },
+          release: () => client.release(),
+        } as never;
+      },
+    };
+    const deletions = new PostgresAccountDeletionStore(
+      pool,
+      new DomainTransactionRunner({ pool: ambiguousPool as never }),
+      Date.now,
+      undefined,
+      {
+        prepare: ({ deletionRequestId, createdAt }) => ({
+          schemaVersion: 1,
+          deletionRequestId,
+          userHmac: "a".repeat(64),
+          hmacKeyVersion: "test",
+          completedAt: null,
+          expiresAt: createdAt + 31 * 24 * 60 * 60 * 1000,
+          signatureVersion: 1,
+          signatureKeyVersion: "test",
+          signature: "b".repeat(64),
+        }),
+        complete: vi.fn(),
+        stageIntent,
+        publish,
+        discardIntent,
+        remove: vi.fn(async () => undefined),
+      },
+    );
+
+    await expect(deletions.request({ userId: user.id })).rejects.toBeInstanceOf(
+      AmbiguousDomainTransactionError,
+    );
+
+    expect(stageIntent).toHaveBeenCalledOnce();
+    expect(discardIntent).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect((await pool.query("SELECT id FROM account_deletion_request")).rowCount).toBe(1);
+    await expect(store.userIdForToken(token)).resolves.toBeNull();
   });
 
   it("erases the person while preserving a shared jar with the deterministic active successor", async () => {
@@ -1159,7 +1442,7 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
     expect(await store.listJarsForUser(rejoined.response.user.id)).toEqual([]);
   });
 
-  it("replays an unexpired signed tombstone against an isolated restored database", async () => {
+  it("replays duplicate crash-retry tombstones once against an isolated restored database", async () => {
     const now = 1_787_500_250_000;
     await pool.query(
       `INSERT INTO users (id,name,auth_provider,created_at) VALUES
@@ -1194,17 +1477,22 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
       userId: "usr_restorekeep" as never,
       createdAt: now - 32 * 24 * 60 * 60 * 1000,
     });
+    const crashRetryDuplicate = journal.prepare({
+      deletionRequestId: AccountDeletionIdSchema.parse("del_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"),
+      userId: "usr_restoredelete" as never,
+      createdAt: now - 500,
+    });
 
     await expect(
       replayRestoreTombstones({
         pool,
         transactions: new DomainTransactionRunner({ pool, clock: () => now }),
-        records: [active, expired],
+        records: [active, crashRetryDuplicate, expired],
         hmacKeys,
         now,
       }),
     ).resolves.toEqual({
-      activeRecords: 1,
+      activeRecords: 2,
       erasedUsers: 1,
       unmatchedRecords: 0,
       scannedTextColumns: expect.any(Number),
@@ -1245,9 +1533,11 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
         expiresAt: completedAt + 31 * 24 * 60 * 60 * 1000,
         signature: "c".repeat(64),
       }),
+      stageIntent: vi.fn(async () => undefined),
       publish: vi.fn(async (record: { completedAt: number | null }) => {
         published.push(record);
       }),
+      discardIntent: vi.fn(async () => undefined),
       remove: vi.fn(async () => undefined),
     };
     const deletions = new PostgresAccountDeletionStore(
@@ -1316,7 +1606,9 @@ describe.skipIf(!HAS_DB)("account deletion acceptance", () => {
         expiresAt: completedAt + 31 * 24 * 60 * 60 * 1000,
         signature: "c".repeat(64),
       }),
+      stageIntent: vi.fn(async () => undefined),
       publish,
+      discardIntent: vi.fn(async () => undefined),
       remove: vi.fn(async () => undefined),
     };
     const deletions = new PostgresAccountDeletionStore(

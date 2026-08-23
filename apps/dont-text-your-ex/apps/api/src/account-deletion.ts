@@ -1,94 +1,61 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import type { Pool } from "pg";
 import { z } from "zod";
-import { type AccountDeletionId, accountMutationLockKey, type UserId } from "../../../contracts";
-import type { DomainTransactionRunner } from "./domain-transaction";
+import {
+  type AccountDeletionId,
+  AccountDeletionIdSchema,
+  accountMutationLockKey,
+  JarIdSchema,
+  type UserId,
+  UserIdSchema,
+} from "../../../contracts";
+import type { AccountDeletionCipher } from "./account-deletion-crypto";
+import {
+  AmbiguousDomainTransactionError,
+  type DomainTransactionRunner,
+} from "./domain-transaction";
 import { id, inviteCode } from "./ids";
-import type { RestoreTombstoneRecord, RestoreTombstoneService } from "./restore-tombstone";
+import {
+  type RestoreTombstoneRecord,
+  RestoreTombstoneRecordSchema,
+  type RestoreTombstoneService,
+} from "./restore-tombstone";
 
-const encodedDeletionKeySchema = z.string().transform((value, context) => {
-  const key = Buffer.from(value, "base64");
-  if (key.length !== 32) {
-    context.addIssue({ code: "custom", message: "account deletion keys must be 32 bytes" });
-    return z.NEVER;
-  }
-  return key;
-});
-const deletionKeyringSchema = z
-  .object({
-    activeKeyId: z.string().min(1),
-    keys: z.record(z.string().min(1), encodedDeletionKeySchema),
-  })
-  .strict();
+export {
+  type AccountDeletionCipher,
+  createAccountDeletionCipher,
+  parseAccountDeletionKeyring,
+} from "./account-deletion-crypto";
 
-export type AccountDeletionKeyring = Readonly<{
-  activeKeyId: string;
-  keys: Readonly<Record<string, Buffer>>;
-}>;
-type SealedAccountDeletionCredential = Readonly<{
-  keyId: string;
-  nonce: string;
-  ciphertext: string;
-}>;
-export interface AccountDeletionCipher {
-  seal(value: string, context: string): SealedAccountDeletionCredential;
-  open(sealed: SealedAccountDeletionCredential, context: string): string;
-}
+export const ACCOUNT_DELETION_STATE = {
+  Accepted: "accepted",
+  Erasing: "erasing",
+  LocallyErased: "locally_erased",
+  AppleRevocationPending: "apple_revocation_pending",
+  Complete: "complete",
+  ManualActionRequired: "manual_action_required",
+} as const;
+type AccountDeletionState = (typeof ACCOUNT_DELETION_STATE)[keyof typeof ACCOUNT_DELETION_STATE];
+const accountDeletionStateSchema = z.enum(ACCOUNT_DELETION_STATE);
 
-export function parseAccountDeletionKeyring(input: unknown): AccountDeletionKeyring {
-  const parsed = deletionKeyringSchema.parse(input);
-  if (!parsed.keys[parsed.activeKeyId]) {
-    throw new Error("active account deletion key is missing");
-  }
-  return parsed;
-}
-
-export function createAccountDeletionCipher(
-  keyring: AccountDeletionKeyring,
-): AccountDeletionCipher {
-  return {
-    seal(value, context) {
-      const nonce = randomBytes(12);
-      const key = keyring.keys[keyring.activeKeyId];
-      if (!key) throw new Error("active account deletion key is missing");
-      const cipher = createCipheriv("aes-256-gcm", key, nonce);
-      cipher.setAAD(Buffer.from(context, "utf8"));
-      const body = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
-      return {
-        keyId: keyring.activeKeyId,
-        nonce: nonce.toString("base64"),
-        ciphertext: Buffer.concat([body, cipher.getAuthTag()]).toString("base64"),
-      };
-    },
-    open(sealed, context) {
-      try {
-        const key = keyring.keys[sealed.keyId];
-        if (!key) throw new Error("key unavailable");
-        const payload = Buffer.from(sealed.ciphertext, "base64");
-        if (payload.length < 17) throw new Error("ciphertext malformed");
-        const body = payload.subarray(0, payload.length - 16);
-        const tag = payload.subarray(payload.length - 16);
-        const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(sealed.nonce, "base64"));
-        decipher.setAAD(Buffer.from(context, "utf8"));
-        decipher.setAuthTag(tag);
-        return Buffer.concat([decipher.update(body), decipher.final()]).toString("utf8");
-      } catch {
-        throw new Error("account deletion credential could not be decrypted");
-      }
-    },
-  };
-}
-
-type AccountDeletionState =
-  | "accepted"
-  | "erasing"
-  | "locally_erased"
-  | "apple_revocation_pending"
-  | "complete"
-  | "manual_action_required";
+export const ACCOUNT_DELETION_CLEANUP_STATE = {
+  Pending: "pending",
+  Terminated: "terminated",
+  Deleted: "deleted",
+} as const;
+export type AccountDeletionCleanupState =
+  (typeof ACCOUNT_DELETION_CLEANUP_STATE)[keyof typeof ACCOUNT_DELETION_CLEANUP_STATE];
+export type TerminalAccountDeletionState =
+  | typeof ACCOUNT_DELETION_STATE.Complete
+  | typeof ACCOUNT_DELETION_STATE.ManualActionRequired;
+const POST_ERASURE_STATES: ReadonlySet<AccountDeletionState> = new Set([
+  ACCOUNT_DELETION_STATE.LocallyErased,
+  ACCOUNT_DELETION_STATE.AppleRevocationPending,
+  ACCOUNT_DELETION_STATE.Complete,
+  ACCOUNT_DELETION_STATE.ManualActionRequired,
+]);
 
 export type AccountDeletionReceipt = Readonly<{
-  status: "accepted";
+  status: typeof ACCOUNT_DELETION_STATE.Accepted;
   deletionRequestId: AccountDeletionId;
 }>;
 
@@ -97,56 +64,63 @@ export type AccountDeletionRecord = Readonly<{
   state: AccountDeletionState;
 }>;
 
-export type AccountDeletionCleanupState = "pending" | "terminated" | "deleted";
 export type TerminalDeletionWorkflow = Readonly<{
   deletionRequestId: AccountDeletionId;
   workflowId: string;
 }>;
 
-type DeletionRow = {
-  readonly id: AccountDeletionId;
-  readonly state: AccountDeletionState;
-};
+const deletionRowSchema = z.object({
+  id: AccountDeletionIdSchema,
+  state: accountDeletionStateSchema,
+});
 
-type DeletionCredentialRow = {
-  readonly authorization_code_ciphertext: string | null;
-  readonly authorization_code_nonce: string | null;
-  readonly authorization_code_key_id: string | null;
-  readonly refresh_token_ciphertext?: string | null;
-  readonly refresh_token_nonce?: string | null;
-  readonly refresh_token_key_id?: string | null;
-};
+const deletionCredentialRowSchema = z.object({
+  authorization_code_ciphertext: z.string().nullable(),
+  authorization_code_nonce: z.string().nullable(),
+  authorization_code_key_id: z.string().nullable(),
+  apple_subject_ciphertext: z.string().nullable().optional(),
+  apple_subject_nonce: z.string().nullable().optional(),
+  apple_subject_key_id: z.string().nullable().optional(),
+  refresh_token_ciphertext: z.string().nullable().optional(),
+  refresh_token_nonce: z.string().nullable().optional(),
+  refresh_token_key_id: z.string().nullable().optional(),
+});
 
-type ErasureRequestRow = {
-  readonly user_id: string | null;
-  readonly state: AccountDeletionState;
-};
+const erasureRequestRowSchema = z.object({
+  user_id: UserIdSchema.nullable(),
+  state: accountDeletionStateSchema,
+});
+const terminalDeletionWorkflowRowSchema = z.object({
+  deletion_request_id: AccountDeletionIdSchema,
+  workflow_id: z.string(),
+});
 
-type ErasureJarRow = {
-  readonly id: string;
-  readonly created_by: string | null;
-  readonly closed_at: string | null;
-  readonly departing_role: string | null;
-  readonly departing_left_at: string | null;
-};
+const erasureJarRowSchema = z.object({
+  id: JarIdSchema,
+  created_by: UserIdSchema.nullable(),
+  closed_at: z.string().nullable(),
+  departing_role: z.enum(["owner", "member"]).nullable(),
+  departing_left_at: z.string().nullable(),
+});
 
-type ActiveMemberRow = {
-  readonly id: string;
-  readonly user_id: string;
-};
+const activeMemberRowSchema = z.object({
+  id: z.string().min(1),
+  user_id: UserIdSchema,
+});
+const erasureUserRowSchema = z.object({ id: UserIdSchema, phone: z.string().nullable() });
 
-type RestoreTombstoneRow = {
-  readonly deletion_request_id: AccountDeletionId;
-  readonly user_hmac: string;
-  readonly key_version: string;
-  readonly signature: string;
-  readonly signature_key_version: string;
-  readonly completed_at: string | null;
-  readonly expires_at: string;
-};
-
-function parseTombstoneRow(row: RestoreTombstoneRow): RestoreTombstoneRecord {
-  return {
+const restoreTombstoneRowSchema = z.object({
+  deletion_request_id: AccountDeletionIdSchema,
+  user_hmac: z.string(),
+  key_version: z.string(),
+  signature: z.string(),
+  signature_key_version: z.string(),
+  completed_at: z.string().nullable(),
+  expires_at: z.string(),
+});
+function parseTombstoneRow(input: unknown): RestoreTombstoneRecord {
+  const row = restoreTombstoneRowSchema.parse(input);
+  return RestoreTombstoneRecordSchema.parse({
     schemaVersion: 1,
     deletionRequestId: row.deletion_request_id,
     userHmac: row.user_hmac,
@@ -156,7 +130,7 @@ function parseTombstoneRow(row: RestoreTombstoneRow): RestoreTombstoneRecord {
     signatureVersion: 1,
     signatureKeyVersion: row.signature_key_version,
     signature: row.signature,
-  };
+  });
 }
 
 function authorizationCodeContext(deletionRequestId: AccountDeletionId): string {
@@ -165,6 +139,10 @@ function authorizationCodeContext(deletionRequestId: AccountDeletionId): string 
 
 function refreshTokenContext(deletionRequestId: AccountDeletionId): string {
   return `deletion/${deletionRequestId}/refresh-token`;
+}
+
+function appleSubjectContext(deletionRequestId: AccountDeletionId): string {
+  return `deletion/${deletionRequestId}/apple-subject`;
 }
 
 export { accountMutationLockKey } from "../../../contracts";
@@ -185,11 +163,18 @@ export class PostgresAccountDeletionStore {
   ) {}
 
   async request(
-    input: Readonly<{ userId: UserId; authorizationCode?: string }>,
+    input: Readonly<
+      { userId: UserId } & (
+        | { authorizationCode: string; appleSubject: string }
+        | { authorizationCode?: never; appleSubject?: never }
+      )
+    >,
   ): Promise<AccountDeletionReceipt> {
-    let publishedTombstone: RestoreTombstoneRecord | undefined;
+    let tombstoneToPublish: RestoreTombstoneRecord | undefined;
+    let stagedTombstone: RestoreTombstoneRecord | undefined;
+    let receipt: AccountDeletionReceipt;
     try {
-      return await this.transactions.run(async ({ db, emit }) => {
+      receipt = await this.transactions.run(async ({ db, emit }) => {
         await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
           accountMutationLockKey(input.userId),
         ]);
@@ -199,12 +184,22 @@ export class PostgresAccountDeletionStore {
         );
         if (!user.rows[0]) throw new AccountDeletionUserNotFoundError();
 
-        const existing = await db.query<DeletionRow>(
+        const existing = await db.query<Record<string, unknown>>(
           "SELECT id,state FROM account_deletion_request WHERE user_id=$1",
           [input.userId],
         );
         if (existing.rows[0]) {
-          return { status: "accepted", deletionRequestId: existing.rows[0].id };
+          const row = deletionRowSchema.parse(existing.rows[0]);
+          if (this.tombstones) {
+            const persisted = await db.query<Record<string, unknown>>(
+              `SELECT deletion_request_id,user_hmac,key_version,signature,
+                      signature_key_version,completed_at,expires_at
+               FROM deletion_restore_tombstone WHERE deletion_request_id=$1`,
+              [row.id],
+            );
+            if (persisted.rows[0]) tombstoneToPublish = parseTombstoneRow(persisted.rows[0]);
+          }
+          return { status: ACCOUNT_DELETION_STATE.Accepted, deletionRequestId: row.id };
         }
 
         const deletionRequestId = id("del");
@@ -212,20 +207,28 @@ export class PostgresAccountDeletionStore {
         const sealedAuthorizationCode = input.authorizationCode
           ? this.cipher?.seal(input.authorizationCode, authorizationCodeContext(deletionRequestId))
           : undefined;
-        if (input.authorizationCode && !sealedAuthorizationCode) {
+        const sealedAppleSubject = input.appleSubject
+          ? this.cipher?.seal(input.appleSubject, appleSubjectContext(deletionRequestId))
+          : undefined;
+        if (input.authorizationCode && (!sealedAuthorizationCode || !sealedAppleSubject)) {
           throw new Error("account deletion credential protection is not configured");
         }
         await db.query(
           `INSERT INTO account_deletion_request
            (id,user_id,state,authorization_code_ciphertext,
-            authorization_code_nonce,authorization_code_key_id,created_at,updated_at)
-         VALUES ($1,$2,'accepted',$3,$4,$5,$6,$6)`,
+            authorization_code_nonce,authorization_code_key_id,
+            apple_subject_ciphertext,apple_subject_nonce,apple_subject_key_id,
+            created_at,updated_at)
+         VALUES ($1,$2,'accepted',$3,$4,$5,$6,$7,$8,$9,$9)`,
           [
             deletionRequestId,
             input.userId,
             sealedAuthorizationCode?.ciphertext ?? null,
             sealedAuthorizationCode?.nonce ?? null,
             sealedAuthorizationCode?.keyId ?? null,
+            sealedAppleSubject?.ciphertext ?? null,
+            sealedAppleSubject?.nonce ?? null,
+            sealedAppleSubject?.keyId ?? null,
             requestedAt,
           ],
         );
@@ -258,8 +261,8 @@ export class PostgresAccountDeletionStore {
            WHERE v.jar_id IN (SELECT id FROM affected_jars)
          )
          INSERT INTO account_deletion_cleanup_item
-           (id,deletion_request_id,workflow_id,state,updated_at)
-         SELECT 'aci_' || md5($1 || ':' || workflow_id),$1,workflow_id,'pending',$3
+           (deletion_request_id,workflow_id,state,updated_at)
+         SELECT $1,workflow_id,'pending',$3
          FROM associated`,
           [deletionRequestId, input.userId, requestedAt],
         );
@@ -285,8 +288,9 @@ export class PostgresAccountDeletionStore {
               tombstone.expiresAt,
             ],
           );
-          await this.tombstones.publish(tombstone);
-          publishedTombstone = tombstone;
+          stagedTombstone = tombstone;
+          await this.tombstones.stageIntent(tombstone);
+          tombstoneToPublish = tombstone;
         }
         await db.query("UPDATE users SET deletion_requested_at=$2 WHERE id=$1", [
           input.userId,
@@ -323,50 +327,80 @@ export class PostgresAccountDeletionStore {
           aggregateId: deletionRequestId,
           aggregateVersion: 1,
         });
-        return { status: "accepted", deletionRequestId };
+        return { status: ACCOUNT_DELETION_STATE.Accepted, deletionRequestId };
       });
     } catch (error) {
-      if (publishedTombstone && this.tombstones) {
-        const committed = await this.pool
-          .query("SELECT 1 FROM account_deletion_request WHERE id=$1", [
-            publishedTombstone.deletionRequestId,
-          ])
-          .catch(() => undefined);
-        if (committed && committed.rowCount === 0) {
-          await this.tombstones.remove(publishedTombstone);
+      if (
+        stagedTombstone &&
+        this.tombstones &&
+        !(error instanceof AmbiguousDomainTransactionError)
+      ) {
+        try {
+          await this.tombstones.discardIntent(stagedTombstone);
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            "account deletion failed and its staged restore record could not be removed",
+          );
         }
       }
       throw error;
     }
+    if (tombstoneToPublish && this.tombstones) {
+      await this.tombstones.publish(tombstoneToPublish);
+    }
+    return receipt;
   }
 
   async load(deletionRequestId: AccountDeletionId): Promise<AccountDeletionRecord | null> {
-    const result = await this.pool.query<DeletionRow>(
+    const result = await this.pool.query<Record<string, unknown>>(
       "SELECT id,state FROM account_deletion_request WHERE id=$1",
       [deletionRequestId],
     );
-    return result.rows[0] ?? null;
+    return result.rows[0] ? deletionRowSchema.parse(result.rows[0]) : null;
   }
 
-  async loadAuthorizationCode(deletionRequestId: AccountDeletionId): Promise<string | null> {
-    const result = await this.pool.query<DeletionCredentialRow>(
-      `SELECT authorization_code_ciphertext,authorization_code_nonce,authorization_code_key_id
+  async loadAppleRevocationCredential(
+    deletionRequestId: AccountDeletionId,
+  ): Promise<{ readonly authorizationCode: string; readonly expectedSubject: string } | null> {
+    const result = await this.pool.query<Record<string, unknown>>(
+      `SELECT authorization_code_ciphertext,authorization_code_nonce,authorization_code_key_id,
+              apple_subject_ciphertext,apple_subject_nonce,apple_subject_key_id
        FROM account_deletion_request WHERE id=$1`,
       [deletionRequestId],
     );
-    const row = result.rows[0];
-    if (!row?.authorization_code_ciphertext) return null;
-    if (!row.authorization_code_nonce || !row.authorization_code_key_id || !this.cipher) {
+    const rawRow = result.rows[0];
+    if (!rawRow) return null;
+    const row = deletionCredentialRowSchema.parse(rawRow);
+    if (!row.authorization_code_ciphertext) return null;
+    if (
+      !row.authorization_code_nonce ||
+      !row.authorization_code_key_id ||
+      !row.apple_subject_ciphertext ||
+      !row.apple_subject_nonce ||
+      !row.apple_subject_key_id ||
+      !this.cipher
+    ) {
       throw new Error("account deletion credential protection is not configured");
     }
-    return this.cipher.open(
-      {
-        ciphertext: row.authorization_code_ciphertext,
-        nonce: row.authorization_code_nonce,
-        keyId: row.authorization_code_key_id,
-      },
-      authorizationCodeContext(deletionRequestId),
-    );
+    return {
+      authorizationCode: this.cipher.open(
+        {
+          ciphertext: row.authorization_code_ciphertext,
+          nonce: row.authorization_code_nonce,
+          keyId: row.authorization_code_key_id,
+        },
+        authorizationCodeContext(deletionRequestId),
+      ),
+      expectedSubject: this.cipher.open(
+        {
+          ciphertext: row.apple_subject_ciphertext,
+          nonce: row.apple_subject_nonce,
+          keyId: row.apple_subject_key_id,
+        },
+        appleSubjectContext(deletionRequestId),
+      ),
+    };
   }
 
   async saveRefreshToken(
@@ -380,7 +414,8 @@ export class PostgresAccountDeletionStore {
        SET state='apple_revocation_pending',
            refresh_token_ciphertext=$2,refresh_token_nonce=$3,refresh_token_key_id=$4,
            authorization_code_ciphertext=NULL,authorization_code_nonce=NULL,
-           authorization_code_key_id=NULL,updated_at=$5
+           authorization_code_key_id=NULL,apple_subject_ciphertext=NULL,
+           apple_subject_nonce=NULL,apple_subject_key_id=NULL,updated_at=$5
        WHERE id=$1 AND state NOT IN ('complete','manual_action_required')`,
       [deletionRequestId, sealed.ciphertext, sealed.nonce, sealed.keyId, this.clock()],
     );
@@ -389,14 +424,16 @@ export class PostgresAccountDeletionStore {
   }
 
   async loadRefreshToken(deletionRequestId: AccountDeletionId): Promise<string | null> {
-    const result = await this.pool.query<DeletionCredentialRow>(
+    const result = await this.pool.query<Record<string, unknown>>(
       `SELECT authorization_code_ciphertext,authorization_code_nonce,authorization_code_key_id,
               refresh_token_ciphertext,refresh_token_nonce,refresh_token_key_id
        FROM account_deletion_request WHERE id=$1`,
       [deletionRequestId],
     );
-    const row = result.rows[0];
-    if (!row?.refresh_token_ciphertext) return null;
+    const rawRow = result.rows[0];
+    if (!rawRow) return null;
+    const row = deletionCredentialRowSchema.parse(rawRow);
+    if (!row.refresh_token_ciphertext) return null;
     if (!row.refresh_token_nonce || !row.refresh_token_key_id || !this.cipher) {
       throw new Error("account deletion credential protection is not configured");
     }
@@ -412,16 +449,20 @@ export class PostgresAccountDeletionStore {
 
   async markTerminal(
     deletionRequestId: AccountDeletionId,
-    state: "complete" | "manual_action_required",
+    state: TerminalAccountDeletionState,
   ): Promise<void> {
     await this.transactions.run(async ({ db }) => {
-      const existing = await db.query<DeletionRow>(
+      const existing = await db.query<Record<string, unknown>>(
         "SELECT id,state FROM account_deletion_request WHERE id=$1 FOR UPDATE",
         [deletionRequestId],
       );
-      const current = existing.rows[0];
-      if (!current) throw new Error("account deletion request not found");
-      if (current.state === "complete" || current.state === "manual_action_required") {
+      const rawCurrent = existing.rows[0];
+      if (!rawCurrent) throw new Error("account deletion request not found");
+      const current = deletionRowSchema.parse(rawCurrent);
+      if (
+        current.state === ACCOUNT_DELETION_STATE.Complete ||
+        current.state === ACCOUNT_DELETION_STATE.ManualActionRequired
+      ) {
         if (current.state !== state) {
           throw new Error("conflicting terminal account deletion state");
         }
@@ -431,7 +472,8 @@ export class PostgresAccountDeletionStore {
           `UPDATE account_deletion_request
            SET state=$2,aggregate_version=aggregate_version+1,
                authorization_code_ciphertext=NULL,authorization_code_nonce=NULL,
-               authorization_code_key_id=NULL,refresh_token_ciphertext=NULL,
+               authorization_code_key_id=NULL,apple_subject_ciphertext=NULL,
+               apple_subject_nonce=NULL,apple_subject_key_id=NULL,refresh_token_ciphertext=NULL,
                refresh_token_nonce=NULL,refresh_token_key_id=NULL,
                updated_at=$3,terminal_at=COALESCE(terminal_at,$3)
            WHERE id=$1`,
@@ -477,10 +519,7 @@ export class PostgresAccountDeletionStore {
     terminalBefore: number,
     limit: number,
   ): Promise<readonly TerminalDeletionWorkflow[]> {
-    const result = await this.pool.query<{
-      deletion_request_id: AccountDeletionId;
-      workflow_id: string;
-    }>(
+    const result = await this.pool.query<Record<string, unknown>>(
       `SELECT c.deletion_request_id,c.workflow_id
        FROM account_deletion_cleanup_item c
        JOIN account_deletion_request r ON r.id=c.deletion_request_id
@@ -496,10 +535,10 @@ export class PostgresAccountDeletionStore {
        ORDER BY r.terminal_at,c.deletion_request_id LIMIT $2`,
       [terminalBefore, limit],
     );
-    return result.rows.map((row) => ({
-      deletionRequestId: row.deletion_request_id,
-      workflowId: row.workflow_id,
-    }));
+    return result.rows.map((input) => {
+      const row = terminalDeletionWorkflowRowSchema.parse(input);
+      return { deletionRequestId: row.deletion_request_id, workflowId: row.workflow_id };
+    });
   }
 
   async purgeExpiredRecords(
@@ -507,7 +546,7 @@ export class PostgresAccountDeletionStore {
     limit: number,
   ): Promise<{ readonly deleted: number }> {
     if (!this.tombstones) throw new Error("restore tombstone cleanup is not configured");
-    const candidates = await this.pool.query<RestoreTombstoneRow>(
+    const candidates = await this.pool.query<Record<string, unknown>>(
       `SELECT t.deletion_request_id,t.user_hmac,t.key_version,t.signature,
               t.signature_key_version,t.completed_at,t.expires_at
        FROM deletion_restore_tombstone t
@@ -522,7 +561,8 @@ export class PostgresAccountDeletionStore {
       [expiredBefore, limit],
     );
     let deleted = 0;
-    for (const candidate of candidates.rows) {
+    for (const input of candidates.rows) {
+      const candidate = restoreTombstoneRowSchema.parse(input);
       await this.tombstones.remove(parseTombstoneRow(candidate));
       const result = await this.pool.query(
         `DELETE FROM account_deletion_request r
@@ -546,20 +586,14 @@ export class PostgresAccountDeletionStore {
     let rollbackTombstone: RestoreTombstoneRecord | undefined;
     try {
       await this.transactions.run(async ({ db }) => {
-        const request = await db.query<ErasureRequestRow>(
+        const request = await db.query<Record<string, unknown>>(
           "SELECT user_id,state FROM account_deletion_request WHERE id=$1 FOR UPDATE",
           [deletionRequestId],
         );
-        const row = request.rows[0];
-        if (!row) throw new Error("account deletion request not found");
-        if (
-          [
-            "locally_erased",
-            "apple_revocation_pending",
-            "complete",
-            "manual_action_required",
-          ].includes(row.state)
-        ) {
+        const rawRow = request.rows[0];
+        if (!rawRow) throw new Error("account deletion request not found");
+        const row = erasureRequestRowSchema.parse(rawRow);
+        if (POST_ERASURE_STATES.has(row.state)) {
           return;
         }
         if (!row.user_id) throw new Error("account deletion request has no user to erase");
@@ -570,14 +604,15 @@ export class PostgresAccountDeletionStore {
           "UPDATE account_deletion_request SET state='erasing',updated_at=$2 WHERE id=$1",
           [deletionRequestId, erasedAt],
         );
-        const user = await db.query<{ id: string; phone: string | null }>(
+        const user = await db.query<Record<string, unknown>>(
           "SELECT id,phone FROM users WHERE id=$1 FOR UPDATE",
           [userId],
         );
-        const userRow = user.rows[0];
-        if (!userRow) throw new Error("account deletion user disappeared before erasure");
+        const rawUserRow = user.rows[0];
+        if (!rawUserRow) throw new Error("account deletion user disappeared before erasure");
+        const userRow = erasureUserRowSchema.parse(rawUserRow);
 
-        const jars = await db.query<ErasureJarRow>(
+        const jars = await db.query<Record<string, unknown>>(
           `SELECT j.id,j.created_by,j.closed_at,
                 departing.role AS departing_role,departing.left_at AS departing_left_at
          FROM jars j
@@ -624,33 +659,35 @@ export class PostgresAccountDeletionStore {
              WHERE v.jar_id IN (SELECT id FROM affected_jars)
            )
            INSERT INTO account_deletion_cleanup_item
-             (id,deletion_request_id,workflow_id,state,updated_at)
-           SELECT 'aci_' || md5($1 || ':' || workflow_id),$1,workflow_id,'pending',$3
+             (deletion_request_id,workflow_id,state,updated_at)
+           SELECT $1,workflow_id,'pending',$3
            FROM associated
            ON CONFLICT (deletion_request_id,workflow_id) DO NOTHING`,
           [deletionRequestId, userId, erasedAt],
         );
-        for (const jar of jars.rows) {
-          const active = await db.query<ActiveMemberRow>(
+        for (const input of jars.rows) {
+          const jar = erasureJarRowSchema.parse(input);
+          const activeResult = await db.query<Record<string, unknown>>(
             `SELECT id,user_id FROM memberships
            WHERE jar_id=$1 AND user_id<>$2 AND left_at IS NULL
            ORDER BY joined_at,id FOR UPDATE`,
             [jar.id, userId],
           );
+          const active = activeResult.rows.map((row) => activeMemberRowSchema.parse(row));
           const departingWasActive = jar.departing_role !== null && jar.departing_left_at === null;
-          if (active.rows.length === 0 && (jar.created_by === userId || departingWasActive)) {
+          if (active.length === 0 && (jar.created_by === userId || departingWasActive)) {
             await db.query("DELETE FROM jars WHERE id=$1", [jar.id]);
             continue;
           }
 
           const creatorIsDeparting = jar.created_by === userId;
           const ownerIsDeparting = departingWasActive && jar.departing_role === "owner";
-          if ((creatorIsDeparting || ownerIsDeparting) && active.rows[0]) {
+          if ((creatorIsDeparting || ownerIsDeparting) && active[0]) {
             await db.query(
               "UPDATE memberships SET role='member' WHERE jar_id=$1 AND left_at IS NULL AND user_id<>$2",
               [jar.id, userId],
             );
-            await db.query("UPDATE memberships SET role='owner' WHERE id=$1", [active.rows[0].id]);
+            await db.query("UPDATE memberships SET role='owner' WHERE id=$1", [active[0].id]);
           }
 
           await db.query(
@@ -709,7 +746,7 @@ export class PostgresAccountDeletionStore {
         );
         await db.query("DELETE FROM users WHERE id=$1", [userId]);
         if (this.tombstones) {
-          const tombstoneResult = await db.query<RestoreTombstoneRow>(
+          const tombstoneResult = await db.query<Record<string, unknown>>(
             `SELECT deletion_request_id,user_hmac,key_version,signature,
                   signature_key_version,completed_at,expires_at
            FROM deletion_restore_tombstone WHERE deletion_request_id=$1 FOR UPDATE`,
@@ -745,18 +782,14 @@ export class PostgresAccountDeletionStore {
     } catch (error) {
       if (rollbackTombstone && this.tombstones) {
         const committed = await this.pool
-          .query<DeletionRow>("SELECT id,state FROM account_deletion_request WHERE id=$1", [
-            deletionRequestId,
-          ])
+          .query<Record<string, unknown>>(
+            "SELECT id,state FROM account_deletion_request WHERE id=$1",
+            [deletionRequestId],
+          )
           .catch(() => undefined);
         if (
           committed?.rows[0] &&
-          ![
-            "locally_erased",
-            "apple_revocation_pending",
-            "complete",
-            "manual_action_required",
-          ].includes(committed.rows[0].state)
+          !POST_ERASURE_STATES.has(deletionRowSchema.parse(committed.rows[0]).state)
         ) {
           await this.tombstones.publish(rollbackTombstone);
         }

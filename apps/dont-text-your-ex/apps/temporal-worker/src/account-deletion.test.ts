@@ -17,7 +17,10 @@ describe("account deletion activities", () => {
     const store = {
       eraseLocally: vi.fn(async () => undefined),
       loadRefreshToken: vi.fn(async () => null),
-      loadAuthorizationCode: vi.fn(async () => "fresh-code"),
+      loadAppleRevocationCredential: vi.fn(async () => ({
+        authorizationCode: "fresh-code",
+        expectedSubject: "apple-subject",
+      })),
       saveRefreshToken: vi.fn(async () => undefined),
       markTerminal: vi.fn(async () => undefined),
       listAssociatedWorkflowIds: vi.fn(async () => []),
@@ -43,6 +46,7 @@ describe("account deletion activities", () => {
     await expect(activities.revokeAppleCredential({ deletionRequestId })).resolves.toEqual({
       outcome: "revoked",
     });
+    expect(apple.exchangeAuthorizationCode).toHaveBeenCalledWith("fresh-code", "apple-subject");
     expect(store.saveRefreshToken).toHaveBeenCalledWith(deletionRequestId, "refresh-token");
     expect(apple.revokeRefreshToken).toHaveBeenCalledWith("refresh-token");
     await expect(
@@ -55,7 +59,7 @@ describe("account deletion activities", () => {
     const store = {
       eraseLocally: vi.fn(),
       loadRefreshToken: vi.fn(async () => "saved-refresh"),
-      loadAuthorizationCode: vi.fn(),
+      loadAppleRevocationCredential: vi.fn(),
       saveRefreshToken: vi.fn(),
       markTerminal: vi.fn(async () => undefined),
       listAssociatedWorkflowIds: vi.fn(async () => []),
@@ -78,7 +82,7 @@ describe("account deletion activities", () => {
     await expect(activities.revokeAppleCredential({ deletionRequestId })).resolves.toEqual({
       outcome: "revoked",
     });
-    expect(store.loadAuthorizationCode).not.toHaveBeenCalled();
+    expect(store.loadAppleRevocationCredential).not.toHaveBeenCalled();
     expect(apple.exchangeAuthorizationCode).not.toHaveBeenCalled();
     expect(apple.revokeRefreshToken).toHaveBeenCalledWith("saved-refresh");
   });
@@ -87,7 +91,7 @@ describe("account deletion activities", () => {
     const store = {
       eraseLocally: vi.fn(),
       loadRefreshToken: vi.fn(async () => null),
-      loadAuthorizationCode: vi.fn(async () => null),
+      loadAppleRevocationCredential: vi.fn(async () => null),
       saveRefreshToken: vi.fn(),
       markTerminal: vi.fn(async () => undefined),
       listAssociatedWorkflowIds: vi.fn(async () => []),
@@ -116,7 +120,7 @@ describe("account deletion activities", () => {
     const store = {
       eraseLocally: vi.fn(),
       loadRefreshToken: vi.fn(),
-      loadAuthorizationCode: vi.fn(),
+      loadAppleRevocationCredential: vi.fn(),
       saveRefreshToken: vi.fn(),
       markTerminal: vi.fn(),
       listAssociatedWorkflowIds: vi
@@ -159,7 +163,7 @@ describe("account deletion activities", () => {
     const store = {
       eraseLocally: vi.fn(),
       loadRefreshToken: vi.fn(),
-      loadAuthorizationCode: vi.fn(),
+      loadAppleRevocationCredential: vi.fn(),
       saveRefreshToken: vi.fn(),
       markTerminal: vi.fn(),
       listAssociatedWorkflowIds: vi.fn(),

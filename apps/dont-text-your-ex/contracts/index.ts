@@ -60,25 +60,17 @@ export const AppleAuthRequestSchema = z
   })
   .strict();
 
-export const DeleteAccountRequestSchema = z
-  .object({
-    confirmed: z.literal(true),
-    authorizationCode: nonEmptyText.optional(),
-    identityToken: nonEmptyText.optional(),
-    nonce: z
-      .string()
-      .regex(/^nonce_[a-f0-9]{48}$/)
-      .optional(),
-  })
-  .strict()
-  .refine(
-    (value) =>
-      [value.authorizationCode, value.identityToken, value.nonce].every(Boolean) ||
-      [value.authorizationCode, value.identityToken, value.nonce].every(
-        (item) => item === undefined,
-      ),
-    { message: "Apple reauthentication fields must be provided together" },
-  );
+export const DeleteAccountRequestSchema = z.union([
+  z.object({ confirmed: z.literal(true) }).strict(),
+  z
+    .object({
+      confirmed: z.literal(true),
+      authorizationCode: nonEmptyText,
+      identityToken: nonEmptyText,
+      nonce: z.string().regex(/^nonce_[a-f0-9]{48}$/),
+    })
+    .strict(),
+]);
 export type DeleteAccountRequest = z.infer<typeof DeleteAccountRequestSchema>;
 
 export const AccountDeletionWorkflowInputSchema = z

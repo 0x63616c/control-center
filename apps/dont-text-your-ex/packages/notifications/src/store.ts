@@ -15,6 +15,7 @@ import {
   type RegisterPushDeviceRequest,
   type UpdateNotificationPreferencesRequest,
   type UserId,
+  UserIdSchema,
 } from "../../../contracts";
 import type { TokenCipher } from "./token-cipher";
 
@@ -89,18 +90,19 @@ export function createNotificationStore(
       const client = await db.connect();
       try {
         await client.query("BEGIN");
-        const recipient = await client.query<{ user_id: UserId }>(
+        const recipient = await client.query<{ user_id: unknown }>(
           `SELECT n.recipient_user_id AS user_id
            FROM notification_delivery d
            JOIN user_notification n ON n.id=d.notification_id
            WHERE d.id=$1`,
           [deliveryId],
         );
-        const userId = recipient.rows[0]?.user_id;
-        if (!userId) {
+        const recipientRow = recipient.rows[0];
+        if (!recipientRow) {
           await client.query("COMMIT");
           return undefined;
         }
+        const userId = UserIdSchema.parse(recipientRow.user_id);
         await client.query("SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))", [
           accountMutationLockKey(userId),
         ]);

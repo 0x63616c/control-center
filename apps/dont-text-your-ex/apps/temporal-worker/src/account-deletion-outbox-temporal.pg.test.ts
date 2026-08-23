@@ -66,6 +66,7 @@ describe.skipIf(!HAS_DB).sequential("account deletion Postgres to Temporal trace
     const receipt = await deletions.request({
       userId: user.id,
       authorizationCode: "tracer-authorization-code",
+      appleSubject: "tracer-apple-subject",
     });
     const fence = new PostgresTemporalWorkflowFence(pool);
     const activities = createAccountDeletionActivities({

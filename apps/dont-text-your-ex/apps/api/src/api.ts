@@ -35,7 +35,7 @@ import {
 } from "../../../contracts";
 import {
   completeAppleAccountSignIn,
-  verifyAppleAccountReauthentication,
+  type verifyAppleAccountReauthentication,
   verifyAppleIdentityToken,
 } from "./apple-auth";
 import { requireUser } from "./auth";
@@ -47,7 +47,15 @@ import { rescueStore } from "./rescue";
 import { resetAndSeed } from "./seed";
 import * as store from "./store";
 
-export type Env = { Variables: { userId: UserId | null; token: SessionToken | null } };
+export type AppleAccountReauthenticationVerifier = typeof verifyAppleAccountReauthentication;
+
+export type Env = {
+  Variables: {
+    userId: UserId | null;
+    token: SessionToken | null;
+    verifyAppleAccountReauthentication: AppleAccountReauthenticationVerifier;
+  };
+};
 
 export const api = new Hono<Env>();
 
@@ -195,23 +203,31 @@ api.delete("/me", async (c) => {
   if (!uid) return c.json(unauth, 401);
   const parsed = await parseRequestJson(c, DeleteAccountRequestSchema);
   if (!parsed.ok) return parsed.response;
+  const reauthentication = "authorizationCode" in parsed.value ? parsed.value : undefined;
   const expectedAppleSubject = await store.appleSubjectForUser(uid);
   if (expectedAppleSubject) {
-    const { identityToken, nonce, authorizationCode } = parsed.value;
-    if (!identityToken || !nonce || !authorizationCode) {
+    if (!reauthentication) {
       return c.json({ error: "Fresh Sign in with Apple authorization is required" }, 401);
     }
     try {
-      await verifyAppleAccountReauthentication({
-        identityToken,
-        nonce,
+      await c.get("verifyAppleAccountReauthentication")({
+        identityToken: reauthentication.identityToken,
+        nonce: reauthentication.nonce,
         expectedSubject: expectedAppleSubject,
       });
     } catch {
       return c.json({ error: "Sign in with Apple reauthentication failed" }, 401);
     }
   }
-  const receipt = await store.requestAccountDeletion(uid, parsed.value.authorizationCode);
+  const receipt = await store.requestAccountDeletion(
+    uid,
+    reauthentication && expectedAppleSubject
+      ? {
+          authorizationCode: reauthentication.authorizationCode,
+          appleSubject: expectedAppleSubject,
+        }
+      : undefined,
+  );
   return c.json(DeleteAccountResponseSchema.parse(receipt), 202);
 });
 

@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { UserIdSchema } from "../../../contracts";
+import { AccountDeletionIdSchema, UserIdSchema } from "../../../contracts";
 import { PostgresAccountDeletionStore } from "./account-deletion";
 import type { DomainTransactionRunner } from "./domain-transaction";
 import {
@@ -52,19 +52,27 @@ export async function replayRestoreTombstones(input: {
       (record) =>
         restoreUserHmac(userId, input.hmacKeys, record.hmacKeyVersion) === record.userHmac,
     );
-    if (matches.length > 1) throw new Error("multiple restore tombstones match one user");
-    const record = matches[0];
-    if (!record) continue;
-    matchedRecordIds.add(record.deletionRequestId);
+    if (matches.length === 0) continue;
+    for (const record of matches) matchedRecordIds.add(record.deletionRequestId);
     matchedUserIds.push(userId);
+    const existing = await input.pool.query<{ id: string }>(
+      "SELECT id FROM account_deletion_request WHERE user_id=$1",
+      [userId],
+    );
+    const deletionRequestId = existing.rows[0]
+      ? AccountDeletionIdSchema.parse(existing.rows[0].id)
+      : [...matches].sort((left, right) =>
+          left.deletionRequestId.localeCompare(right.deletionRequestId),
+        )[0]?.deletionRequestId;
+    if (!deletionRequestId) throw new Error("restore replay matched no usable deletion request");
     await input.pool.query(
       `INSERT INTO account_deletion_request
          (id,user_id,state,created_at,updated_at)
        VALUES ($1,$2,'accepted',$3,$3)
        ON CONFLICT (id) DO NOTHING`,
-      [record.deletionRequestId, userId, input.now],
+      [deletionRequestId, userId, input.now],
     );
-    await deletions.eraseLocally(record.deletionRequestId);
+    await deletions.eraseLocally(deletionRequestId);
     erasedUsers += 1;
   }
 

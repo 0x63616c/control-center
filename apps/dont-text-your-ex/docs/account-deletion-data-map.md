@@ -22,8 +22,17 @@ One authenticated transaction performs these steps before returning
    exist; legacy missing-token behavior is presented before confirmation.
 3. Insert one `account_deletion_requests` row and one
    `account_deletion_cleanup_items` manifest per associated workflow/history.
-4. Insert the restore tombstone, then atomically publish its pseudonymous copy
-   to the external erasure journal before the transaction can be acknowledged.
+4. After authentication and the database inserts, durably stage a signed,
+   pseudonymous deletion-intent file before committing the transaction. A normal
+   rollback removes that intent. Restore replay deliberately honors an intent
+   left by a process or host failure, resolving the unavoidable cross-store
+   commit ambiguity in favor of the authenticated deletion instruction rather
+   than resurrecting the account. After commit, atomically publish the final
+   journal record and remove the intent before returning acknowledgement. A
+   publication failure withholds acknowledgement; a retry republishes the
+   committed record, and the durable deletion workflow also publishes the
+   completed form. Restore replay tolerates multiple valid records for one HMAC
+   and erases the identity exactly once.
 5. Transfer encrypted Apple revocation material to the deletion request.
 6. Mark the account `deleting`, delete every session, suppress pending device
    delivery, and append exactly one `account.deletion_requested` event.
@@ -102,7 +111,12 @@ erasure-journal path. The record contains only:
 The raw user ID and Apple subject are forbidden. The HMAC and signing keys are
 dedicated External Secrets mounted only into deletion/restoration processes.
 Old key versions remain available only while an unexpired tombstone names them.
-Publication uses write-then-rename in the same directory. The restore tool:
+The API first uses write-then-rename to create `<deletion-id>.intent`, then uses
+the same durable atomic-write pattern for `<deletion-id>.json` after the database
+commit. Both file kinds are signed and restore-authoritative, preventing a crash
+immediately before or after the commit from creating a resurrection window. The
+intent is removed after final publication, or after an observed transaction
+rollback. The restore tool:
 
 1. restores the database into a network-isolated scratch namespace;
 2. loads every unexpired journal record;

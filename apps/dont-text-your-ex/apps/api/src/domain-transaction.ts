@@ -32,6 +32,19 @@ export type DomainTransactionContext = Readonly<{
   emit(event: NewDomainEvent): Promise<DomainEvent>;
 }>;
 
+export class AmbiguousDomainTransactionError extends Error {
+  constructor(cause: unknown, rollbackFailure?: unknown) {
+    super("database transaction outcome is ambiguous", { cause });
+    this.name = "AmbiguousDomainTransactionError";
+    if (rollbackFailure !== undefined) {
+      Object.defineProperty(this, "rollbackFailure", {
+        value: rollbackFailure,
+        enumerable: false,
+      });
+    }
+  }
+}
+
 type DomainTransactionRunnerOptions = Readonly<{
   pool: Pick<Pool, "connect">;
   nudge?: PostCommitEventNudge;
@@ -55,6 +68,7 @@ export class DomainTransactionRunner {
   async run<T>(operation: (context: DomainTransactionContext) => Promise<T>): Promise<T> {
     const client = await this.#pool.connect();
     const eventIds: DomainEvent["id"][] = [];
+    let commitAttempted = false;
     try {
       await client.query("BEGIN");
       const value = await operation({
@@ -90,11 +104,20 @@ export class DomainTransactionRunner {
           return persisted;
         },
       });
+      commitAttempted = true;
       await client.query("COMMIT");
       await this.#boundedNudge(eventIds);
       return value;
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => undefined);
+      let rollbackFailure: unknown;
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackError) {
+        rollbackFailure = rollbackError;
+      }
+      if (commitAttempted || rollbackFailure !== undefined) {
+        throw new AmbiguousDomainTransactionError(error, rollbackFailure);
+      }
       throw error;
     } finally {
       client.release();

@@ -23,6 +23,9 @@ CREATE TABLE account_deletion_request (
   authorization_code_ciphertext TEXT,
   authorization_code_nonce TEXT,
   authorization_code_key_id TEXT,
+  apple_subject_ciphertext TEXT,
+  apple_subject_nonce TEXT,
+  apple_subject_key_id TEXT,
   refresh_token_ciphertext TEXT,
   refresh_token_nonce TEXT,
   refresh_token_key_id TEXT,
@@ -34,6 +37,9 @@ CREATE TABLE account_deletion_request (
   terminal_at BIGINT,
   CHECK ((authorization_code_ciphertext IS NULL) = (authorization_code_nonce IS NULL)),
   CHECK ((authorization_code_ciphertext IS NULL) = (authorization_code_key_id IS NULL)),
+  CHECK ((apple_subject_ciphertext IS NULL) = (apple_subject_nonce IS NULL)),
+  CHECK ((apple_subject_ciphertext IS NULL) = (apple_subject_key_id IS NULL)),
+  CHECK ((authorization_code_ciphertext IS NULL) = (apple_subject_ciphertext IS NULL)),
   CHECK ((refresh_token_ciphertext IS NULL) = (refresh_token_nonce IS NULL)),
   CHECK ((refresh_token_ciphertext IS NULL) = (refresh_token_key_id IS NULL))
 );
@@ -44,12 +50,11 @@ CREATE INDEX account_deletion_request_state
   ON account_deletion_request(state, updated_at, id);
 
 CREATE TABLE account_deletion_cleanup_item (
-  id TEXT PRIMARY KEY,
   deletion_request_id TEXT NOT NULL REFERENCES account_deletion_request(id) ON DELETE CASCADE,
   workflow_id TEXT NOT NULL,
   state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'terminated', 'deleted')),
   updated_at BIGINT NOT NULL,
-  UNIQUE (deletion_request_id, workflow_id)
+  PRIMARY KEY (deletion_request_id, workflow_id)
 );
 
 CREATE TABLE deletion_restore_tombstone (

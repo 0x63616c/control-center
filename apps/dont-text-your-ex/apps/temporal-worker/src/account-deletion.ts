@@ -1,10 +1,18 @@
 import type { Client, WorkflowExecutionStatusName } from "@temporalio/client";
 import type { AccountDeletionId } from "../../../contracts";
-import type { PostgresAccountDeletionStore } from "../../api/src/account-deletion";
+import {
+  ACCOUNT_DELETION_CLEANUP_STATE,
+  ACCOUNT_DELETION_STATE,
+  type PostgresAccountDeletionStore,
+  type TerminalAccountDeletionState,
+} from "../../api/src/account-deletion";
 import type { AccountDeletionWorkflowFence } from "./workflow-dispatch-fence";
 
 export interface AppleRevocationGateway {
-  exchangeAuthorizationCode(authorizationCode: string): Promise<{ refreshToken: string }>;
+  exchangeAuthorizationCode(
+    authorizationCode: string,
+    expectedSubject: string,
+  ): Promise<{ refreshToken: string }>;
   revokeRefreshToken(refreshToken: string): Promise<void>;
 }
 
@@ -66,7 +74,7 @@ export class TemporalAccountDeletionWorkflowCleanupGateway
 export type AccountDeletionActivityStore = Pick<
   PostgresAccountDeletionStore,
   | "eraseLocally"
-  | "loadAuthorizationCode"
+  | "loadAppleRevocationCredential"
   | "loadRefreshToken"
   | "saveRefreshToken"
   | "markTerminal"
@@ -95,7 +103,7 @@ export function createAccountDeletionActivities(dependencies: {
     async terminateAssociatedWorkflows(input: { readonly deletionRequestId: AccountDeletionId }) {
       const workflowIds = await dependencies.store.listAssociatedWorkflowIds(
         input.deletionRequestId,
-        ["pending"],
+        [ACCOUNT_DELETION_CLEANUP_STATE.Pending],
       );
       for (const workflowId of workflowIds) {
         await dependencies.workflowFence.withCleanupFence(workflowId, async () => {
@@ -103,7 +111,7 @@ export function createAccountDeletionActivities(dependencies: {
           await dependencies.store.markCleanupState(
             input.deletionRequestId,
             workflowId,
-            "terminated",
+            ACCOUNT_DELETION_CLEANUP_STATE.Terminated,
           );
         });
       }
@@ -118,11 +126,16 @@ export function createAccountDeletionActivities(dependencies: {
     async revokeAppleCredential(input: { readonly deletionRequestId: AccountDeletionId }) {
       let refreshToken = await dependencies.store.loadRefreshToken(input.deletionRequestId);
       if (!refreshToken) {
-        const authorizationCode = await dependencies.store.loadAuthorizationCode(
+        const credential = await dependencies.store.loadAppleRevocationCredential(
           input.deletionRequestId,
         );
-        if (!authorizationCode) return { outcome: "manual_action_required" as const };
-        const exchanged = await dependencies.apple.exchangeAuthorizationCode(authorizationCode);
+        if (!credential) {
+          return { outcome: ACCOUNT_DELETION_STATE.ManualActionRequired };
+        }
+        const exchanged = await dependencies.apple.exchangeAuthorizationCode(
+          credential.authorizationCode,
+          credential.expectedSubject,
+        );
         refreshToken = exchanged.refreshToken;
         await dependencies.store.saveRefreshToken(input.deletionRequestId, refreshToken);
       }
@@ -132,7 +145,7 @@ export function createAccountDeletionActivities(dependencies: {
 
     async finishAccountDeletion(input: {
       readonly deletionRequestId: AccountDeletionId;
-      readonly state: "complete" | "manual_action_required";
+      readonly state: TerminalAccountDeletionState;
     }) {
       await dependencies.store.markTerminal(input.deletionRequestId, input.state);
       return { state: input.state };
@@ -143,12 +156,16 @@ export function createAccountDeletionActivities(dependencies: {
     }) {
       const workflowIds = await dependencies.store.listAssociatedWorkflowIds(
         input.deletionRequestId,
-        ["pending", "terminated"],
+        [ACCOUNT_DELETION_CLEANUP_STATE.Pending, ACCOUNT_DELETION_CLEANUP_STATE.Terminated],
       );
       for (const workflowId of workflowIds) {
         await dependencies.workflowFence.withCleanupFence(workflowId, async () => {
           await dependencies.workflows.deleteHistory(workflowId);
-          await dependencies.store.markCleanupState(input.deletionRequestId, workflowId, "deleted");
+          await dependencies.store.markCleanupState(
+            input.deletionRequestId,
+            workflowId,
+            ACCOUNT_DELETION_CLEANUP_STATE.Deleted,
+          );
         });
       }
       return { deleted: workflowIds.length };
@@ -168,7 +185,7 @@ export function createAccountDeletionActivities(dependencies: {
           await dependencies.store.markCleanupState(
             item.deletionRequestId,
             item.workflowId,
-            "deleted",
+            ACCOUNT_DELETION_CLEANUP_STATE.Deleted,
           );
         });
       }

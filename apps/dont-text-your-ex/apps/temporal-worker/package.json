@@ -16,7 +16,8 @@
     "@www/platform": "workspace:*",
     "@www/temporal-runtime": "workspace:*",
     "jose": "^6.2.3",
-    "pg": "^8.13.3"
+    "pg": "^8.13.3",
+    "zod": "^4.4.2"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",

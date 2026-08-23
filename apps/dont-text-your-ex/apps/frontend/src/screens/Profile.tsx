@@ -37,9 +37,9 @@ type SignOutState =
 
 type DeleteState =
   | { readonly status: "idle" }
-  | { readonly status: "confirming" }
+  | { readonly status: "confirming"; readonly confirmed: boolean }
   | { readonly status: "submitting" }
-  | { readonly status: "failed"; readonly message: string };
+  | { readonly status: "failed"; readonly confirmed: boolean; readonly message: string };
 
 function assertNever(value: never): never {
   throw new Error(`Unexpected sign-out state: ${JSON.stringify(value)}`);
@@ -71,7 +71,6 @@ export function Profile({
   const [appVersion, setAppVersion] = useState("v1.0");
   const [signOutState, setSignOutState] = useState<SignOutState>({ status: "idle" });
   const [deleteState, setDeleteState] = useState<DeleteState>({ status: "idle" });
-  const [deletionConfirmed, setDeletionConfirmed] = useState(false);
 
   const meId = me?.id;
   useEffect(() => {
@@ -130,7 +129,11 @@ export function Profile({
   };
 
   const deleteAccount = async () => {
-    if (!deletionConfirmed || deleteState.status === "submitting") return;
+    if (
+      (deleteState.status !== "confirming" && deleteState.status !== "failed") ||
+      !deleteState.confirmed
+    )
+      return;
     setDeleteState({ status: "submitting" });
     try {
       let reauthentication:
@@ -152,6 +155,7 @@ export function Profile({
     } catch (error) {
       setDeleteState({
         status: "failed",
+        confirmed: true,
         message: error instanceof Error ? error.message : "Account deletion could not be started",
       });
     }
@@ -314,7 +318,7 @@ export function Profile({
       {deleteState.status === "idle" ? (
         <button
           type="button"
-          onClick={() => setDeleteState({ status: "confirming" })}
+          onClick={() => setDeleteState({ status: "confirming", confirmed: false })}
           style={{
             width: "100%",
             marginTop: 16,
@@ -366,15 +370,22 @@ export function Profile({
           >
             <input
               type="checkbox"
-              checked={deletionConfirmed}
-              onChange={(event) => setDeletionConfirmed(event.currentTarget.checked)}
+              checked={deleteState.status !== "submitting" && deleteState.confirmed}
+              disabled={deleteState.status === "submitting"}
+              onChange={(event) =>
+                setDeleteState({ status: "confirming", confirmed: event.currentTarget.checked })
+              }
             />
             I understand this account and its private data cannot be recovered.
           </label>
           <button
             type="button"
             onClick={deleteAccount}
-            disabled={!deletionConfirmed || deleteState.status === "submitting"}
+            disabled={
+              deleteState.status === "submitting" ||
+              (deleteState.status !== "confirming" && deleteState.status !== "failed") ||
+              !deleteState.confirmed
+            }
             style={{
               width: "100%",
               minHeight: 48,
@@ -384,7 +395,12 @@ export function Profile({
               background: T.red,
               color: "white",
               fontWeight: 750,
-              opacity: !deletionConfirmed || deleteState.status === "submitting" ? 0.55 : 1,
+              opacity:
+                deleteState.status === "submitting" ||
+                (deleteState.status !== "confirming" && deleteState.status !== "failed") ||
+                !deleteState.confirmed
+                  ? 0.55
+                  : 1,
             }}
           >
             {deleteState.status === "submitting"
@@ -401,7 +417,6 @@ export function Profile({
             disabled={deleteState.status === "submitting"}
             onClick={() => {
               setDeleteState({ status: "idle" });
-              setDeletionConfirmed(false);
             }}
             style={{
               width: "100%",

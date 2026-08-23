@@ -333,13 +333,14 @@ const SESSION_ABSOLUTE_LIFETIME_MS = 30 * DAY;
 export async function createSession(userId: UserId): Promise<SessionToken> {
   const token = SessionTokenSchema.parse(id("sess", 24));
   const createdAt = now();
-  const result = await pool.query(
-    `INSERT INTO sessions (token, user_id, created_at, expires_at, last_used_at)
-     SELECT $1,id,$3,$4,$5 FROM users
-     WHERE id=$2 AND deletion_requested_at IS NULL`,
-    [token, userId, createdAt, createdAt + SESSION_ABSOLUTE_LIFETIME_MS, createdAt],
+  const guarded = await withActiveAccountRequest(userId, () =>
+    pool.query(
+      `INSERT INTO sessions (token, user_id, created_at, expires_at, last_used_at)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [token, userId, createdAt, createdAt + SESSION_ABSOLUTE_LIFETIME_MS, createdAt],
+    ),
   );
-  if (result.rowCount !== 1) throw new Error("account is being deleted");
+  if (!guarded.active) throw new Error("account is being deleted");
   return token;
 }
 
@@ -387,9 +388,9 @@ export async function withActiveAccountRequest<T>(
 
 export function requestAccountDeletion(
   userId: UserId,
-  authorizationCode?: string,
+  appleCredential?: { readonly authorizationCode: string; readonly appleSubject: string },
 ): Promise<AccountDeletionReceipt> {
-  return accountDeletions.request({ userId, authorizationCode });
+  return accountDeletions.request(appleCredential ? { userId, ...appleCredential } : { userId });
 }
 
 export async function appleSubjectForUser(userId: UserId): Promise<string | null> {

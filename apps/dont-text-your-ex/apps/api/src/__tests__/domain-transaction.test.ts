@@ -3,10 +3,39 @@ import { JarIdSchema } from "../../../../contracts";
 import { pool } from "../db/index";
 import { runMigrations } from "../db/migrate";
 import { InviteVersionIdSchema } from "../domain-events";
-import { DomainTransactionRunner, RecordingPostCommitNudge } from "../domain-transaction";
+import {
+  AmbiguousDomainTransactionError,
+  DomainTransactionRunner,
+  RecordingPostCommitNudge,
+} from "../domain-transaction";
 import { PostgresOutbox } from "../outbox";
 
 const HAS_DB = !!process.env.DATABASE_URL;
+
+describe("domain transaction outcome", () => {
+  it("surfaces a COMMIT response failure as ambiguous even when ROLLBACK is attempted", async () => {
+    const statements: string[] = [];
+    const runner = new DomainTransactionRunner({
+      pool: {
+        connect: async () =>
+          ({
+            query: async (statement: string) => {
+              statements.push(statement);
+              if (statement === "COMMIT") throw new Error("commit response lost");
+              if (statement === "ROLLBACK") throw new Error("connection unavailable");
+              return { rows: [], rowCount: 0 };
+            },
+            release: () => undefined,
+          }) as never,
+      },
+    });
+
+    await expect(runner.run(async () => "value")).rejects.toBeInstanceOf(
+      AmbiguousDomainTransactionError,
+    );
+    expect(statements).toEqual(["BEGIN", "COMMIT", "ROLLBACK"]);
+  });
+});
 
 beforeAll(async () => {
   if (HAS_DB) await runMigrations();

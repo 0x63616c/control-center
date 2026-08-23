@@ -5,11 +5,17 @@ import {
 } from "../../../contracts";
 import type { AccountDeletionActivities } from "./account-deletion";
 
+const ACCOUNT_DELETION_WORKFLOW_STATE = {
+  Erasing: "erasing",
+  RevokingApple: "revoking_apple",
+  Complete: "complete",
+  ManualActionRequired: "manual_action_required",
+} as const;
 export type AccountDeletionWorkflowState =
-  | "erasing"
-  | "revoking_apple"
-  | "complete"
-  | "manual_action_required";
+  (typeof ACCOUNT_DELETION_WORKFLOW_STATE)[keyof typeof ACCOUNT_DELETION_WORKFLOW_STATE];
+type TerminalAccountDeletionWorkflowState =
+  | typeof ACCOUNT_DELETION_WORKFLOW_STATE.Complete
+  | typeof ACCOUNT_DELETION_WORKFLOW_STATE.ManualActionRequired;
 
 export const accountDeletionStateQuery =
   defineQuery<AccountDeletionWorkflowState>("accountDeletionState");
@@ -56,9 +62,9 @@ const appleActivities = proxyActivities<Pick<AccountDeletionActivities, "revokeA
 
 export async function AccountDeletionWorkflow(
   rawInput: AccountDeletionWorkflowInput,
-): Promise<"complete" | "manual_action_required"> {
+): Promise<TerminalAccountDeletionWorkflowState> {
   const input = AccountDeletionWorkflowInputSchema.parse(rawInput);
-  let state: AccountDeletionWorkflowState = "erasing";
+  let state: AccountDeletionWorkflowState = ACCOUNT_DELETION_WORKFLOW_STATE.Erasing;
   setHandler(accountDeletionStateQuery, () => state);
 
   await cleanupActivities.terminateAssociatedWorkflows({
@@ -81,15 +87,18 @@ export async function AccountDeletionWorkflow(
   await cleanupActivities.terminateAssociatedWorkflows({
     deletionRequestId: input.deletionRequestId,
   });
-  state = "revoking_apple";
-  let terminal: "complete" | "manual_action_required";
+  state = ACCOUNT_DELETION_WORKFLOW_STATE.RevokingApple;
+  let terminal: TerminalAccountDeletionWorkflowState;
   try {
     const result = await appleActivities.revokeAppleCredential({
       deletionRequestId: input.deletionRequestId,
     });
-    terminal = result.outcome === "revoked" ? "complete" : "manual_action_required";
+    terminal =
+      result.outcome === "revoked"
+        ? ACCOUNT_DELETION_WORKFLOW_STATE.Complete
+        : ACCOUNT_DELETION_WORKFLOW_STATE.ManualActionRequired;
   } catch {
-    terminal = "manual_action_required";
+    terminal = ACCOUNT_DELETION_WORKFLOW_STATE.ManualActionRequired;
   }
   await localActivities.finishAccountDeletion({
     deletionRequestId: input.deletionRequestId,

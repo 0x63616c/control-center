@@ -41,12 +41,12 @@ const unsignedRecordSchema = z
     signatureKeyVersion: z.string().min(1),
   })
   .strict();
-const recordSchema = unsignedRecordSchema
+export const RestoreTombstoneRecordSchema = unsignedRecordSchema
   .extend({ signature: z.string().regex(/^[a-f0-9]{64}$/) })
   .strict();
 
 type UnsignedRestoreTombstoneRecord = z.infer<typeof unsignedRecordSchema>;
-export type RestoreTombstoneRecord = z.infer<typeof recordSchema>;
+export type RestoreTombstoneRecord = z.infer<typeof RestoreTombstoneRecordSchema>;
 
 export interface RestoreTombstoneService {
   prepare(input: {
@@ -55,7 +55,9 @@ export interface RestoreTombstoneService {
     createdAt: number;
   }): RestoreTombstoneRecord;
   complete(record: RestoreTombstoneRecord, completedAt: number): RestoreTombstoneRecord;
+  stageIntent(record: RestoreTombstoneRecord): Promise<void>;
   publish(record: RestoreTombstoneRecord): Promise<void>;
+  discardIntent(record: RestoreTombstoneRecord): Promise<void>;
   remove(record: RestoreTombstoneRecord): Promise<void>;
 }
 
@@ -86,7 +88,7 @@ export function verifyRestoreTombstoneRecord(
   input: unknown,
   signingKeys: RestoreTombstoneKeyring,
 ): RestoreTombstoneRecord {
-  const record = recordSchema.parse(input);
+  const record = RestoreTombstoneRecordSchema.parse(input);
   const expected = sign(unsigned(record), signingKeys).signature;
   if (!timingSafeEqual(Buffer.from(record.signature, "hex"), Buffer.from(expected, "hex"))) {
     throw new Error("restore tombstone signature is invalid");
@@ -113,10 +115,14 @@ export async function loadFileRestoreTombstones(input: {
     throw error;
   });
   const records: RestoreTombstoneRecord[] = [];
-  for (const name of names.filter((value) => /^del_[A-Za-z0-9]+\.json$/.test(value)).sort()) {
+  for (const name of names
+    .filter((value) => /^del_[A-Za-z0-9]+\.(json|intent)$/.test(value))
+    .sort()) {
     const serialized = await readFile(join(input.directory, name), "utf8");
     const record = verifyRestoreTombstoneRecord(JSON.parse(serialized), input.signingKeys);
-    if (`${record.deletionRequestId}.json` !== name) {
+    if (
+      ![`${record.deletionRequestId}.json`, `${record.deletionRequestId}.intent`].includes(name)
+    ) {
       throw new Error("restore tombstone filename does not match its deletion request");
     }
     records.push(record);
@@ -131,6 +137,43 @@ export function createFileRestoreTombstoneService(input: {
 }): RestoreTombstoneService {
   const signed = (value: Omit<UnsignedRestoreTombstoneRecord, "signatureKeyVersion">) =>
     sign({ ...value, signatureKeyVersion: input.signingKeys.activeKeyId }, input.signingKeys);
+  const pathFor = (record: RestoreTombstoneRecord, extension: ".json" | ".intent") =>
+    join(input.directory, `${record.deletionRequestId}${extension}`);
+  const syncDirectory = async () => {
+    const handle = await open(input.directory, "r");
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  };
+  const writeAtomic = async (record: RestoreTombstoneRecord, destination: string) => {
+    await mkdir(input.directory, { recursive: true, mode: 0o700 });
+    const temporary = join(input.directory, `.${record.deletionRequestId}.${randomUUID()}.tmp`);
+    const handle = await open(temporary, "wx", 0o600);
+    try {
+      try {
+        await handle.writeFile(`${JSON.stringify(record)}\n`, "utf8");
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await rename(temporary, destination);
+      await syncDirectory();
+    } catch (error) {
+      await unlink(temporary).catch(() => undefined);
+      throw error;
+    }
+  };
+  const removeIfPresent = async (path: string) => {
+    const removed = await unlink(path)
+      .then(() => true)
+      .catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      });
+    if (removed) await syncDirectory();
+  };
   return {
     prepare({ deletionRequestId, userId, createdAt }) {
       return signed({
@@ -150,32 +193,23 @@ export function createFileRestoreTombstoneService(input: {
         expiresAt: completedAt + 31 * DAY_MS,
       });
     },
+    async stageIntent(record) {
+      const checked = verifyRestoreTombstoneRecord(record, input.signingKeys);
+      await writeAtomic(checked, pathFor(checked, ".intent"));
+    },
     async publish(record) {
       const checked = verifyRestoreTombstoneRecord(record, input.signingKeys);
-      await mkdir(input.directory, { recursive: true, mode: 0o700 });
-      const destination = join(input.directory, `${checked.deletionRequestId}.json`);
-      const temporary = join(input.directory, `.${checked.deletionRequestId}.${randomUUID()}.tmp`);
-      const handle = await open(temporary, "wx", 0o600);
-      try {
-        try {
-          await handle.writeFile(`${JSON.stringify(checked)}\n`, "utf8");
-          await handle.sync();
-        } finally {
-          await handle.close();
-        }
-        await rename(temporary, destination);
-      } catch (error) {
-        await unlink(temporary).catch(() => undefined);
-        throw error;
-      }
+      await writeAtomic(checked, pathFor(checked, ".json"));
+      await removeIfPresent(pathFor(checked, ".intent"));
+    },
+    async discardIntent(record) {
+      const checked = verifyRestoreTombstoneRecord(record, input.signingKeys);
+      await removeIfPresent(pathFor(checked, ".intent"));
     },
     async remove(record) {
       const checked = verifyRestoreTombstoneRecord(record, input.signingKeys);
-      await unlink(join(input.directory, `${checked.deletionRequestId}.json`)).catch(
-        (error: NodeJS.ErrnoException) => {
-          if (error.code !== "ENOENT") throw error;
-        },
-      );
+      await removeIfPresent(pathFor(checked, ".json"));
+      await removeIfPresent(pathFor(checked, ".intent"));
     },
   };
 }
