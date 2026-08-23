@@ -14,6 +14,12 @@ import type { ModerationNarrativeCipher } from "./moderation";
 
 export const MODERATION_OPERATOR_IDENTITY = "operator:calum-peter-webb" as const;
 export const MODERATION_PRODUCTION_ACKNOWLEDGEMENT = "--acknowledge-production" as const;
+export const MODERATION_STATUS = {
+  Submitted: "submitted",
+  Reviewing: "reviewing",
+  Resolved: "resolved",
+  Dismissed: "dismissed",
+} as const;
 
 type ModerationAdminDatabase = Readonly<{
   connect(): Promise<{
@@ -22,11 +28,19 @@ type ModerationAdminDatabase = Readonly<{
   }>;
 }>;
 
-const ModerationStatusSchema = z.enum(["submitted", "reviewing", "resolved", "dismissed"]);
-const OpenModerationStatusSchema = z.enum(["submitted", "reviewing"]);
-const ModerationTransitionStatusSchema = z.enum(["reviewing", "resolved", "dismissed"]);
+const ModerationStatusSchema = z.enum(Object.values(MODERATION_STATUS));
+const OpenModerationStatusSchema = z.union([
+  z.literal(MODERATION_STATUS.Submitted),
+  z.literal(MODERATION_STATUS.Reviewing),
+]);
+const ModerationTransitionStatusSchema = z.union([
+  z.literal(MODERATION_STATUS.Reviewing),
+  z.literal(MODERATION_STATUS.Resolved),
+  z.literal(MODERATION_STATUS.Dismissed),
+]);
 
 export type ModerationStatus = z.infer<typeof ModerationStatusSchema>;
+type OpenModerationStatus = z.infer<typeof OpenModerationStatusSchema>;
 type ModerationTransitionStatus = z.infer<typeof ModerationTransitionStatusSchema>;
 
 const ModerationQueueRowSchema = z.object({
@@ -69,7 +83,7 @@ const ModerationTransitionRowSchema = z.object({
 export type ModerationQueueItem = Readonly<{
   reportId: AbuseReportId;
   targetUserId: UserId | null;
-  status: "submitted" | "reviewing";
+  status: OpenModerationStatus;
   hasNarrative: boolean;
   referencedJarId: JarId | null;
   referencedGameplayReportId: ReportId | null;
@@ -301,8 +315,10 @@ export class PostgresModerationAdminStore implements ModerationAdminStore {
         return { reportId, status, changed: false };
       }
       const valid =
-        (current.status === "submitted" && status === "reviewing") ||
-        (current.status === "reviewing" && (status === "resolved" || status === "dismissed"));
+        (current.status === MODERATION_STATUS.Submitted &&
+          status === MODERATION_STATUS.Reviewing) ||
+        (current.status === MODERATION_STATUS.Reviewing &&
+          (status === MODERATION_STATUS.Resolved || status === MODERATION_STATUS.Dismissed));
       if (!valid) throw new ModerationAdminCliError("invalid_status_transition");
 
       const changedAt = Math.max(this.clock(), current.updated_at + 1);
