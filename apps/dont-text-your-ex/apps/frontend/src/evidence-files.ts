@@ -25,7 +25,7 @@ type ReadEvidence =
   | { readonly ok: true; readonly evidence: readonly EvidenceImageInput[] }
   | { readonly ok: false; readonly error: EvidenceFileError };
 
-export type DecodedEvidenceImage<Source> = Readonly<{
+type DecodedEvidenceImage<Source> = Readonly<{
   width: number;
   height: number;
   source: Source;

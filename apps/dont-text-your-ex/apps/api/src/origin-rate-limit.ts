@@ -7,9 +7,9 @@ import {
 } from "../../../contracts/rate-limit-policy";
 import type { Env } from "./api";
 
-export const ORIGIN_RATE_LIMIT_CLASS = RATE_LIMIT_CLASS;
+const ORIGIN_RATE_LIMIT_CLASS = RATE_LIMIT_CLASS;
 
-export type OriginRateLimitClass = RateLimitClass;
+type OriginRateLimitClass = RateLimitClass;
 
 export type OriginRateLimitResponse =
   | Readonly<{

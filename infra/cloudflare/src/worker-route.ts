@@ -1,7 +1,7 @@
 import * as cloudflare from "@pulumi/cloudflare";
 import * as pulumi from "@pulumi/pulumi";
 
-export const DONT_TEXT_YOUR_EX_WORKER_NAME = "dont-text-your-ex-edge";
+const DONT_TEXT_YOUR_EX_WORKER_NAME = "dont-text-your-ex-edge";
 
 // Unlike every long-lived edge resource, this single attachment is deliberately
 // recoverable: removing it returns /api traffic to the already rate-limited

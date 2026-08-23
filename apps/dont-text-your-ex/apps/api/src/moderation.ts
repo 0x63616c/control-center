@@ -42,7 +42,7 @@ export type ModerationNarrativeKeyring = Readonly<{
   keys: Readonly<Record<string, Buffer>>;
 }>;
 
-export type SealedModerationNarrative = Readonly<{
+type SealedModerationNarrative = Readonly<{
   ciphertext: string;
   nonce: string;
   keyVersion: string;

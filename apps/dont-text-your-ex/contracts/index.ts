@@ -169,7 +169,7 @@ export const AvatarPhotoDataUrlSchema = z.string().superRefine((dataUrl, ctx) =>
 });
 
 export const AVATAR_EMOJIS = ["🫠", "💔", "🥲", "😈", "🦝", "🍷", "👀"] as const;
-export const AvatarEmojiSchema = z.enum(AVATAR_EMOJIS);
+const AvatarEmojiSchema = z.enum(AVATAR_EMOJIS);
 export type AvatarEmoji = z.infer<typeof AvatarEmojiSchema>;
 
 export const UpdateMeRequestSchema = z
@@ -257,7 +257,6 @@ export type LogSlipRequest = z.infer<typeof LogSlipRequestSchema>;
 export type EvidenceImageInput = z.infer<typeof EvidenceImageInputSchema>;
 export type CreateReportRequest = z.infer<typeof CreateReportRequestSchema>;
 export type CreateAbuseReportRequest = z.infer<typeof CreateAbuseReportRequestSchema>;
-export type AbuseReportReceipt = z.infer<typeof AbuseReportReceiptSchema>;
 export type RescueCommandRequest = z.infer<typeof RescueCommandRequestSchema>;
 
 const rescueBase = {
