@@ -113,6 +113,39 @@ enum KioskHealthTests {
         Check.expect(backoff.delay(forAttempt: 10) == 60, "large attempt is capped at max (60s)")
         Check.expect(backoff.delay(forAttempt: -1) == 2, "negative attempt clamps to base")
 
+        // --- Memory-pressure recovery policy (T-51) ---
+        // A warning is the last signal iOS gives us before the abrupt exits seen
+        // on Builds 102/103. Recover the hosted document immediately, but never
+        // permit warning storms to turn into an unattended reload loop.
+        var pressure = MemoryPressureRecoveryPolicy(
+            cooldownMs: 15 * 60 * 1_000,
+            windowMs: 60 * 60 * 1_000,
+            maxRecoveriesPerWindow: 3
+        )
+        let firstWarning = Int64(1_000_000)
+        Check.expect(pressure.shouldRecover(atMs: firstWarning), "first memory warning triggers recovery")
+        Check.expect(
+            !pressure.shouldRecover(atMs: firstWarning + 14 * 60 * 1_000),
+            "warning inside the 15-minute cooldown is suppressed"
+        )
+        Check.expect(
+            pressure.shouldRecover(atMs: firstWarning + 15 * 60 * 1_000),
+            "warning at the cooldown boundary can recover"
+        )
+        Check.expect(
+            pressure.shouldRecover(atMs: firstWarning + 30 * 60 * 1_000),
+            "a third spaced warning can recover"
+        )
+        Check.expect(
+            !pressure.shouldRecover(atMs: firstWarning + 45 * 60 * 1_000),
+            "rolling-window cap prevents a reload loop"
+        )
+        Check.expect(
+            pressure.shouldRecover(atMs: firstWarning + 61 * 60 * 1_000),
+            "recovery resumes after the oldest attempt leaves the window"
+        )
+        Check.expect(pressure.recoveryCount == 3, "policy retains only rolling-window recovery timestamps")
+
         if Check.failures.isEmpty {
             print("\nALL PASS")
             exit(0)
