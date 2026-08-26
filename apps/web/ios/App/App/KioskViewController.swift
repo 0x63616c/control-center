@@ -1,8 +1,44 @@
 import Capacitor
 import UIKit
+import WebKit
+
+// Capacitor owns WKWebView.navigationDelegate and already reloads after a
+// WebContent-only process termination. This transparent proxy records that
+// specific event, then forwards it (and every other delegate callback) so the
+// framework's recovery behavior remains intact.
+private final class KioskNavigationDelegateProxy: NSObject, WKNavigationDelegate {
+    weak var downstream: WKNavigationDelegate?
+
+    init(downstream: WKNavigationDelegate?) {
+        self.downstream = downstream
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        KioskDiagnosticsRecorder.shared.recordWebContentTermination()
+        downstream?.webViewWebContentProcessDidTerminate?(webView)
+    }
+
+    override func responds(to selector: Selector!) -> Bool {
+        super.responds(to: selector) || downstream?.responds(to: selector) == true
+    }
+
+    override func forwardingTarget(for selector: Selector!) -> Any? {
+        if downstream?.responds(to: selector) == true {
+            return downstream
+        }
+        return super.forwardingTarget(for: selector)
+    }
+}
 
 class KioskViewController: CAPBridgeViewController {
     private var watchdog: KioskWatchdog?
+    private var navigationDelegateProxy: KioskNavigationDelegateProxy?
+    private var observesMemoryPressure = false
+    private var memoryPressurePolicy = PanelMemoryPressureRecoveryPolicy(
+        cooldownMs: 15 * 60 * 1_000,
+        windowMs: 60 * 60 * 1_000,
+        maxRecoveriesPerWindow: 3
+    )
 
     override var prefersStatusBarHidden: Bool {
         return true
@@ -32,8 +68,14 @@ class KioskViewController: CAPBridgeViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        installNavigationDelegateProxyIfNeeded()
+        observeMemoryPressureIfNeeded()
         injectAccessHeadersIfNeeded()
         startWatchdogIfNeeded()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     // CF Access service-token credentials (www-cuuw), baked into Info.plist at
@@ -55,13 +97,53 @@ class KioskViewController: CAPBridgeViewController {
     // CF-Access headers so the first authenticated nav establishes the
     // CF_Authorization cookie. No-op when the origin is open (kioskAccess == nil).
     private func injectAccessHeadersIfNeeded() {
-        guard let access = kioskAccess, let webView = webView else { return }
+        guard kioskAccess != nil else { return }
+        loadAuthenticatedOrigin()
+    }
+
+    private func loadAuthenticatedOrigin() {
+        guard let webView = webView else { return }
         guard let origin = bridge?.config.appStartServerURL ?? webView.url else { return }
         var request = URLRequest(url: origin)
-        for (name, value) in access.headers {
+        for (name, value) in kioskAccess?.headers ?? [:] {
             request.setValue(value, forHTTPHeaderField: name)
         }
         webView.load(request)
+    }
+
+    private func installNavigationDelegateProxyIfNeeded() {
+        guard navigationDelegateProxy == nil, let webView = webView else { return }
+        let proxy = KioskNavigationDelegateProxy(downstream: webView.navigationDelegate)
+        webView.navigationDelegate = proxy
+        navigationDelegateProxy = proxy
+    }
+
+    private func observeMemoryPressureIfNeeded() {
+        guard !observesMemoryPressure else { return }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(recoverFromMemoryPressure),
+            name: .panelMemoryPressureRecoveryRequested,
+            object: nil
+        )
+        observesMemoryPressure = true
+    }
+
+    @objc private func recoverFromMemoryPressure() {
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        guard memoryPressurePolicy.shouldRecover(atMs: nowMs) else {
+            KioskDiagnosticsRecorder.shared.recordRecovery(
+                trigger: .memoryWarning,
+                outcome: .suppressedByLoopProtection
+            )
+            return
+        }
+
+        KioskDiagnosticsRecorder.shared.recordRecovery(
+            trigger: .memoryWarning,
+            outcome: .authenticatedOriginReload
+        )
+        loadAuthenticatedOrigin()
     }
 
     // The kiosk is unattended, so it must recover on its own from a Cloudflare

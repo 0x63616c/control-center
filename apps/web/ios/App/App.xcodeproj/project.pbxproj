@@ -22,6 +22,8 @@
 		7A1E7FAC0004BDE64C0FA106 /* PanelVolumePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E7FAC0003BDE64C0FA106 /* PanelVolumePlugin.swift */; };
 		7A1E7FAC0006BDE64C0FA106 /* KioskBrowserPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E7FAC0005BDE64C0FA106 /* KioskBrowserPlugin.swift */; };
 		7A1E7FAC0008BDE64C0FA106 /* KioskDiagnosticsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E7FAC0007BDE64C0FA106 /* KioskDiagnosticsPlugin.swift */; };
+		7A1E7FAC0010BDE64C0FA106 /* PanelDiagnosticsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E7FAC000FBDE64C0FA106 /* PanelDiagnosticsModels.swift */; };
+		7A1E7FAC0012BDE64C0FA106 /* PanelMetricKitCollector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E7FAC0011BDE64C0FA106 /* PanelMetricKitCollector.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -42,6 +44,8 @@
 		7A1E7FAC0003BDE64C0FA106 /* PanelVolumePlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PanelVolumePlugin.swift; sourceTree = "<group>"; };
 		7A1E7FAC0005BDE64C0FA106 /* KioskBrowserPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KioskBrowserPlugin.swift; sourceTree = "<group>"; };
 		7A1E7FAC0007BDE64C0FA106 /* KioskDiagnosticsPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KioskDiagnosticsPlugin.swift; sourceTree = "<group>"; };
+		7A1E7FAC000FBDE64C0FA106 /* PanelDiagnosticsModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PanelDiagnosticsModels.swift; sourceTree = "<group>"; };
+		7A1E7FAC0011BDE64C0FA106 /* PanelMetricKitCollector.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PanelMetricKitCollector.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -91,6 +95,8 @@
 				7A1E7FAC0003BDE64C0FA106 /* PanelVolumePlugin.swift */,
 				7A1E7FAC0005BDE64C0FA106 /* KioskBrowserPlugin.swift */,
 				7A1E7FAC0007BDE64C0FA106 /* KioskDiagnosticsPlugin.swift */,
+				7A1E7FAC000FBDE64C0FA106 /* PanelDiagnosticsModels.swift */,
+				7A1E7FAC0011BDE64C0FA106 /* PanelMetricKitCollector.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -184,6 +190,8 @@
 				7A1E7FAC0004BDE64C0FA106 /* PanelVolumePlugin.swift in Sources */,
 				7A1E7FAC0006BDE64C0FA106 /* KioskBrowserPlugin.swift in Sources */,
 				7A1E7FAC0008BDE64C0FA106 /* KioskDiagnosticsPlugin.swift in Sources */,
+				7A1E7FAC0010BDE64C0FA106 /* PanelDiagnosticsModels.swift in Sources */,
+				7A1E7FAC0012BDE64C0FA106 /* PanelMetricKitCollector.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

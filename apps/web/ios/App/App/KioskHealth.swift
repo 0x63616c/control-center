@@ -124,3 +124,33 @@ struct Backoff {
         return Swift.min(max, scaled)
     }
 }
+
+// Pure decision core for the native memory-warning recovery path (T-51).
+// Recovery itself belongs to KioskViewController; this type only owns the
+// bounded policy so it can be proven without UIKit or an iOS simulator.
+struct PanelMemoryPressureRecoveryPolicy {
+    let cooldownMs: Int64
+    let windowMs: Int64
+    let maxRecoveriesPerWindow: Int
+
+    private(set) var recoveryTimestampsMs: [Int64] = []
+
+    var recoveryCount: Int {
+        recoveryTimestampsMs.count
+    }
+
+    mutating func shouldRecover(atMs nowMs: Int64) -> Bool {
+        let windowStart = nowMs - windowMs
+        recoveryTimestampsMs.removeAll { $0 < windowStart }
+
+        if let latest = recoveryTimestampsMs.last, nowMs - latest < cooldownMs {
+            return false
+        }
+        guard recoveryTimestampsMs.count < maxRecoveriesPerWindow else {
+            return false
+        }
+
+        recoveryTimestampsMs.append(nowMs)
+        return true
+    }
+}
