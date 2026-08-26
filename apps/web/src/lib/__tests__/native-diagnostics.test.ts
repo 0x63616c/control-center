@@ -159,6 +159,50 @@ describe("startNativeDiagnostics", () => {
     stop();
   });
 
+  it("records the bounded Build 103 native snapshot during a staggered rollout", async () => {
+    isNative.mockReturnValue(true);
+    hasPlugin.mockReturnValue(true);
+    getSnapshot.mockResolvedValueOnce({
+      currentRun: {
+        runId: "6ee006bb-fe0f-442c-ae85-2449115efd9d",
+        startedAtMs: 1_787_670_216_822,
+        lastUpdatedAtMs: 1_787_768_316_194,
+        lifecycleState: "active",
+        memoryWarnings: 0,
+        footprintBytes: 13_812_976,
+        peakFootprintBytes: 14_157_040,
+      },
+      physicalMemoryBytes: 5_942_460_416,
+      osVersion: "18.7.8",
+    });
+    const before = getTail().length;
+
+    const stop = startNativeDiagnostics();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const entries = getTail()
+      .slice(before)
+      .filter((entry) => entry.source === "native-diagnostics");
+    expect(entries).toEqual([
+      expect.objectContaining({
+        level: "info",
+        msg: "process snapshot",
+        data: expect.objectContaining({
+          reason: "boot",
+          currentRun: expect.objectContaining({
+            runId: "6ee006bb-fe0f-442c-ae85-2449115efd9d",
+            footprintBytes: 13_812_976,
+            peakFootprintBytes: 14_157_040,
+            diagnosticsSchema: "build-103",
+            cpuTimeSeconds: null,
+            warningEventHistoryCount: 0,
+          }),
+        }),
+      }),
+    ]);
+    stop();
+  });
+
   it("rejects a version-skewed native payload at the plugin boundary", async () => {
     isNative.mockReturnValue(true);
     hasPlugin.mockReturnValue(true);
