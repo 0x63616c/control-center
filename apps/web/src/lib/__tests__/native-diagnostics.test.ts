@@ -11,8 +11,25 @@ const getSnapshot = vi.fn(() =>
       lastUpdatedAtMs: 2,
       lifecycleState: "active",
       memoryWarnings: 0,
+      warningEvents: [
+        {
+          timestampMs: 2,
+          lifecycleState: "active",
+          footprintBytes: 100,
+          peakFootprintBytes: 120,
+        },
+      ],
+      webContentTerminations: [],
+      recoveryEvents: [],
       footprintBytes: 100,
       peakFootprintBytes: 120,
+      cpuTimeSeconds: 42,
+      cpuPercentOfOneCore: 7.5,
+      thermalState: "nominal",
+      batteryLevel: 83,
+      batteryState: "charging",
+      appUptimeSeconds: 3_600,
+      systemUptimeSeconds: 86_400,
     },
     previousRun: {
       runId: "previous",
@@ -20,11 +37,31 @@ const getSnapshot = vi.fn(() =>
       lastUpdatedAtMs: 4,
       lifecycleState: "active",
       memoryWarnings: 1,
+      warningEvents: [],
+      webContentTerminations: [],
+      recoveryEvents: [],
       footprintBytes: 900,
       peakFootprintBytes: 950,
+      cpuTimeSeconds: 100,
+      cpuPercentOfOneCore: 3,
+      thermalState: "fair",
+      batteryLevel: 80,
+      batteryState: "unplugged",
+      appUptimeSeconds: 31_000,
+      systemUptimeSeconds: 120_000,
     },
     physicalMemoryBytes: 6_000,
     osVersion: "test",
+    metricKitRecords: [
+      {
+        id: "metric-1",
+        kind: "metric",
+        receivedAtMs: 5,
+        payloadUTF8:
+          '{"applicationMemoryMetrics":{"peakMemoryUsage":123},"applicationExitMetrics":{"cumulativeMemoryResourceLimitExitCount":2},"irrelevant":{"networkRequests":999}}',
+        truncated: false,
+      },
+    ],
   }),
 );
 
@@ -69,10 +106,50 @@ describe("startNativeDiagnostics", () => {
     expect(entries).toHaveLength(2);
     expect(entries[0]?.data).toMatchObject({
       reason: "boot",
+      currentRun: {
+        cpuTimeSeconds: 42,
+        cpuPercentOfOneCore: 7.5,
+        thermalState: "nominal",
+        batteryLevel: 83,
+        appUptimeSeconds: 3_600,
+        systemUptimeSeconds: 86_400,
+        warningEventHistoryCount: 1,
+      },
       previousRun: { runId: "previous", memoryWarnings: 1, peakFootprintBytes: 950 },
     });
+    expect(entries[0]?.data).not.toHaveProperty("metricKitRecords");
     expect(entries[1]?.data).toMatchObject({ reason: "heartbeat" });
     expect(entries[1]?.data).not.toHaveProperty("previousRun");
+
+    const metricEntries = getTail()
+      .slice(before)
+      .filter(
+        (entry) => entry.source === "native-diagnostics" && entry.msg === "MetricKit evidence",
+      );
+    expect(metricEntries).toHaveLength(1);
+    expect(metricEntries[0]?.data).toMatchObject({
+      id: "metric-1",
+      kind: "metric",
+      evidence: expect.arrayContaining([
+        { path: "applicationMemoryMetrics.peakMemoryUsage", value: 123 },
+        { path: "applicationExitMetrics.cumulativeMemoryResourceLimitExitCount", value: 2 },
+      ]),
+    });
+    expect(JSON.stringify(metricEntries[0]?.data)).not.toContain("networkRequests");
+    expect(JSON.stringify(metricEntries[0]?.data).length).toBeLessThan(2_000);
+
+    const warningEntries = getTail()
+      .slice(before)
+      .filter(
+        (entry) => entry.source === "native-diagnostics" && entry.msg === "memory warning evidence",
+      );
+    expect(warningEntries).toHaveLength(1);
+    expect(warningEntries[0]?.data).toMatchObject({
+      runId: "current",
+      runOrigin: "current",
+      timestampMs: 2,
+      footprintBytes: 100,
+    });
     stop();
   });
 });

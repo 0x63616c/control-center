@@ -19,5 +19,9 @@ bin="$(mktemp -d)/kiosk-health-tests"
 trap 'rm -rf "$(dirname "$bin")"' EXIT
 
 # KioskHealth.swift is pure Foundation; the test file owns @main.
-swiftc -O "$app/KioskHealth.swift" "$tests/KioskHealthTests.swift" -o "$bin"
+swiftc -O \
+  "$app/KioskHealth.swift" \
+  "$app/KioskDiagnosticsModels.swift" \
+  "$tests/KioskHealthTests.swift" \
+  -o "$bin"
 "$bin"

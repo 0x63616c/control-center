@@ -601,9 +601,20 @@ external debugger can attach to:
   deliberately silent: it previously produced millions of redundant writes
   while failures and recovery transitions carried the diagnostic value
 - the native shell atomically records lifecycle state, physical/peak memory
-  footprint, and memory-warning count every five minutes and on transitions;
-  the next process ships the prior process's last record even after an abrupt
-  iOS jetsam termination
+  footprint, cumulative + interval CPU, thermal state, battery, app uptime,
+  device uptime, and the newest 16 exact memory-warning/WebKit-termination/
+  recovery events every five minutes and on transitions; Build 104 can decode
+  the smaller Build 103 record already on disk. A first memory warning reloads
+  the authenticated origin; a 15-minute cooldown and three-per-hour rolling cap
+  prevent a recovery loop. This is local recovery, **not** missing-heartbeat
+  alerting
+- MetricKit app-exit, peak-memory, crash, hang, CPU and termination evidence is
+  retained independently across launches (newest four payloads, at most 64 KiB
+  each). Raw JSON remains in the native archive; `frontend_log` receives a
+  deterministic summary of at most eight relevant values so the logger's
+  2,000-character per-entry bound cannot clip the evidence unpredictably.
+  MetricKit delivery is asynchronous and may arrive well after the causative
+  exit; absence in the first post-restart snapshot is not evidence of absence
 - read on-device via Settings , "View logs", or query the shipped Postgres rows
   by stable `device_id`
 
