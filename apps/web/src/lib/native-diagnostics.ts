@@ -15,57 +15,6 @@ import { log } from "./log/logger";
 const HEARTBEAT_MS = 5 * 60 * 1_000;
 const diagnosticsLog = log.child("native-diagnostics");
 
-interface NativeRunRecord {
-  /** Shape reported by the installed native shell, independent of the remote web build. */
-  readonly diagnosticsSchema: "build-103" | "build-104";
-  readonly runId: string;
-  readonly startedAtMs: number;
-  readonly lastUpdatedAtMs: number;
-  readonly lifecycleState: string;
-  readonly memoryWarnings: number;
-  readonly warningEvents: readonly NativeMemoryWarningEvent[];
-  readonly webContentTerminations: readonly NativeWebContentTerminationEvent[];
-  readonly recoveryEvents: readonly NativeRecoveryEvent[];
-  readonly footprintBytes: number;
-  readonly peakFootprintBytes: number;
-  /** Cumulative user + system CPU seconds for the native app process. */
-  readonly cpuTimeSeconds: number | null;
-  /** CPU used since the previous native sample, where 100 is one full core. */
-  readonly cpuPercentOfOneCore: number | null;
-  readonly thermalState: "nominal" | "fair" | "serious" | "critical" | "unknown";
-  readonly batteryLevel: number | null;
-  readonly batteryState: "unknown" | "unplugged" | "charging" | "full";
-  readonly appUptimeSeconds: number | null;
-  readonly systemUptimeSeconds: number | null;
-}
-
-interface NativeMemoryWarningEvent {
-  readonly timestampMs: number;
-  readonly lifecycleState: string;
-  readonly footprintBytes: number;
-  readonly peakFootprintBytes: number;
-}
-
-interface NativeWebContentTerminationEvent {
-  readonly timestampMs: number;
-  readonly lifecycleState: string;
-  readonly footprintBytes: number;
-}
-
-interface NativeRecoveryEvent {
-  readonly timestampMs: number;
-  readonly trigger: string;
-  readonly outcome: string;
-}
-
-interface NativeDiagnosticsSnapshot {
-  readonly currentRun: NativeRunRecord;
-  readonly previousRun?: NativeRunRecord;
-  readonly physicalMemoryBytes: number;
-  readonly osVersion: string;
-  readonly metricKitRecords?: readonly z.infer<typeof nativeMetricKitRecordSchema>[];
-}
-
 interface KioskDiagnosticsPlugin {
   getSnapshot(): Promise<unknown>;
 }
@@ -101,18 +50,20 @@ const recoveryEventSchema = z.object({
   trigger: z.literal("memory-warning"),
   outcome: z.enum(["authenticated-origin-reload", "suppressed-by-loop-protection"]),
 });
-const nativeRunRecordBuild104Schema = z
-  .object({
-    runId: z.string().min(1).max(128),
-    startedAtMs: timestampSchema,
-    lastUpdatedAtMs: timestampSchema,
-    lifecycleState: lifecycleSchema,
-    memoryWarnings: z.number().int().nonnegative(),
+const nativeRunRecordBaseSchema = z.object({
+  runId: z.string().min(1).max(128),
+  startedAtMs: timestampSchema,
+  lastUpdatedAtMs: timestampSchema,
+  lifecycleState: lifecycleSchema,
+  memoryWarnings: z.number().int().nonnegative(),
+  footprintBytes: byteCountSchema,
+  peakFootprintBytes: byteCountSchema,
+});
+const nativeRunRecordBuild104Schema = nativeRunRecordBaseSchema
+  .extend({
     warningEvents: z.array(memoryWarningEventSchema).max(16),
     webContentTerminations: z.array(webContentTerminationEventSchema).max(16),
     recoveryEvents: z.array(recoveryEventSchema).max(16),
-    footprintBytes: byteCountSchema,
-    peakFootprintBytes: byteCountSchema,
     cpuTimeSeconds: z.number().finite().nonnegative(),
     cpuPercentOfOneCore: z.number().finite().nonnegative(),
     thermalState: z.enum(["nominal", "fair", "serious", "critical", "unknown"]),
@@ -127,38 +78,26 @@ const nativeRunRecordBuild104Schema = z
 // this exact old boundary shape so Build 103 continues reporting its available
 // evidence during that staggered rollout, without letting partially malformed
 // Build 104 records fall through as legacy data.
-const nativeRunRecordBuild103Schema = z
-  .object({
-    runId: z.string().min(1).max(128),
-    startedAtMs: timestampSchema,
-    lastUpdatedAtMs: timestampSchema,
-    lifecycleState: lifecycleSchema,
-    memoryWarnings: z.number().int().nonnegative(),
-    footprintBytes: byteCountSchema,
-    peakFootprintBytes: byteCountSchema,
-  })
-  .strict()
-  .transform(
-    (run): NativeRunRecord => ({
-      ...run,
-      diagnosticsSchema: "build-103",
-      warningEvents: [],
-      webContentTerminations: [],
-      recoveryEvents: [],
-      cpuTimeSeconds: null,
-      cpuPercentOfOneCore: null,
-      thermalState: "unknown",
-      batteryLevel: null,
-      batteryState: "unknown",
-      appUptimeSeconds: null,
-      systemUptimeSeconds: null,
-    }),
-  );
+const nativeRunRecordBuild103Schema = nativeRunRecordBaseSchema.strict().transform((run) => ({
+  ...run,
+  diagnosticsSchema: "build-103" as const,
+  warningEvents: [],
+  webContentTerminations: [],
+  recoveryEvents: [],
+  cpuTimeSeconds: null,
+  cpuPercentOfOneCore: null,
+  thermalState: "unknown" as const,
+  batteryLevel: null,
+  batteryState: "unknown" as const,
+  appUptimeSeconds: null,
+  systemUptimeSeconds: null,
+}));
 
 const nativeRunRecordSchema = z.union([
   nativeRunRecordBuild104Schema,
   nativeRunRecordBuild103Schema,
 ]);
+type NativeRunRecord = z.infer<typeof nativeRunRecordSchema>;
 const nativeMetricKitRecordSchema = z.object({
   sequence: z.number().int().positive(),
   kind: z.enum(["metric", "diagnostic"]),
@@ -176,6 +115,7 @@ const nativeDiagnosticsSnapshotSchema = z.object({
   osVersion: z.string().min(1).max(64),
   metricKitRecords: z.array(nativeMetricKitRecordSchema).max(4).optional(),
 });
+type NativeDiagnosticsSnapshot = z.infer<typeof nativeDiagnosticsSnapshotSchema>;
 
 function compactRunRecord(run: NativeRunRecord): Omit<
   NativeRunRecord,
