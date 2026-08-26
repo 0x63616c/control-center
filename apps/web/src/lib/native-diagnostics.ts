@@ -1,5 +1,5 @@
 /**
- * Web bridge for the native kiosk run recorder.
+ * Web bridge for the native Panel run recorder.
  *
  * WKWebView cannot expose the process footprint or iOS memory-pressure events.
  * The native shell records those values to an atomic file every five minutes
@@ -9,6 +9,7 @@
  */
 
 import { Capacitor, registerPlugin } from "@capacitor/core";
+import { z } from "zod";
 import { log } from "./log/logger";
 
 const HEARTBEAT_MS = 5 * 60 * 1_000;
@@ -55,95 +56,85 @@ interface NativeRecoveryEvent {
   readonly outcome: string;
 }
 
-interface NativeMetricKitRecord {
-  readonly id: string;
-  readonly kind: "metric" | "diagnostic";
-  readonly receivedAtMs: number;
-  readonly payloadUTF8: string;
-  readonly truncated: boolean;
-}
-
 interface NativeDiagnosticsSnapshot {
   readonly currentRun: NativeRunRecord;
   readonly previousRun?: NativeRunRecord;
   readonly physicalMemoryBytes: number;
   readonly osVersion: string;
-  readonly metricKitRecords?: readonly NativeMetricKitRecord[];
+  readonly metricKitRecords?: readonly z.infer<typeof nativeMetricKitRecordSchema>[];
 }
 
 interface KioskDiagnosticsPlugin {
-  getSnapshot(): Promise<NativeDiagnosticsSnapshot>;
+  getSnapshot(): Promise<unknown>;
 }
 
 const plugin = registerPlugin<KioskDiagnosticsPlugin>("KioskDiagnostics");
 let previousRunLogged = false;
-const metricKitRecordIdsLogged = new Set<string>();
+const metricKitRecordKeysLogged = new Set<string>();
 const nativeEventIdsLogged = new Set<string>();
-const METRICKIT_EVIDENCE_KEY = /(memory|exit|crash|hang|cpu|thermal|termination|peak|jetsam)/i;
-const METRICKIT_EVIDENCE_LIMIT = 8;
-const METRICKIT_CANDIDATE_LIMIT = 200;
 
-interface MetricKitEvidenceValue {
-  readonly path: string;
-  readonly value: string | number | boolean | null;
-}
-
-function summarizeMetricKitPayload(payloadUTF8: string): {
-  evidence: readonly MetricKitEvidenceValue[];
-  parseError: boolean;
-} {
-  let payload: unknown;
-  try {
-    payload = JSON.parse(payloadUTF8);
-  } catch {
-    return { evidence: [], parseError: true };
-  }
-
-  const candidates: MetricKitEvidenceValue[] = [];
-  const visit = (value: unknown, path: readonly string[]): void => {
-    if (candidates.length >= METRICKIT_CANDIDATE_LIMIT) return;
-    if (
-      value === null ||
-      typeof value === "string" ||
-      typeof value === "number" ||
-      typeof value === "boolean"
-    ) {
-      if (!path.some((part) => METRICKIT_EVIDENCE_KEY.test(part))) return;
-      candidates.push({
-        path: path.join(".").slice(0, 120),
-        value: typeof value === "string" ? value.slice(0, 80) : value,
-      });
-      return;
-    }
-    if (Array.isArray(value)) {
-      value.forEach((item, index) => {
-        visit(item, [...path, String(index)]);
-      });
-      return;
-    }
-    if (typeof value === "object") {
-      for (const [key, child] of Object.entries(value)) visit(child, [...path, key]);
-    }
-  };
-  visit(payload, []);
-  const score = (item: MetricKitEvidenceValue): number => {
-    const path = item.path.toLowerCase();
-    if (path.includes("memoryresourcelimit") || path.includes("jetsam")) return 0;
-    if (path.includes("termination") || path.includes("exit")) return 1;
-    if (path.includes("peak") && path.includes("memory")) return 2;
-    if (path.includes("crash")) return 3;
-    if (path.includes("hang")) return 4;
-    if (path.includes("memory")) return 5;
-    if (path.includes("cpu")) return 6;
-    return 7;
-  };
-  const evidence = candidates
-    .map((item, index) => ({ item, index }))
-    .sort((left, right) => score(left.item) - score(right.item) || left.index - right.index)
-    .slice(0, METRICKIT_EVIDENCE_LIMIT)
-    .map(({ item }) => item);
-  return { evidence, parseError: false };
-}
+const timestampSchema = z.number().finite().nonnegative();
+const byteCountSchema = z.number().finite().nonnegative();
+const lifecycleSchema = z.enum([
+  "launching",
+  "inactive",
+  "background",
+  "foreground",
+  "active",
+  "terminating",
+]);
+const memoryWarningEventSchema = z.object({
+  timestampMs: timestampSchema,
+  lifecycleState: lifecycleSchema,
+  footprintBytes: byteCountSchema,
+  peakFootprintBytes: byteCountSchema,
+});
+const webContentTerminationEventSchema = z.object({
+  timestampMs: timestampSchema,
+  lifecycleState: lifecycleSchema,
+  footprintBytes: byteCountSchema,
+});
+const recoveryEventSchema = z.object({
+  timestampMs: timestampSchema,
+  trigger: z.literal("memory-warning"),
+  outcome: z.enum(["authenticated-origin-reload", "suppressed-by-loop-protection"]),
+});
+const nativeRunRecordSchema = z.object({
+  runId: z.string().min(1).max(128),
+  startedAtMs: timestampSchema,
+  lastUpdatedAtMs: timestampSchema,
+  lifecycleState: lifecycleSchema,
+  memoryWarnings: z.number().int().nonnegative(),
+  warningEvents: z.array(memoryWarningEventSchema).max(16),
+  webContentTerminations: z.array(webContentTerminationEventSchema).max(16),
+  recoveryEvents: z.array(recoveryEventSchema).max(16),
+  footprintBytes: byteCountSchema,
+  peakFootprintBytes: byteCountSchema,
+  cpuTimeSeconds: z.number().finite().nonnegative(),
+  cpuPercentOfOneCore: z.number().finite().nonnegative(),
+  thermalState: z.enum(["nominal", "fair", "serious", "critical", "unknown"]),
+  batteryLevel: z.number().finite().min(0).max(100).nullable(),
+  batteryState: z.enum(["unknown", "unplugged", "charging", "full"]),
+  appUptimeSeconds: z.number().finite().nonnegative(),
+  systemUptimeSeconds: z.number().finite().nonnegative(),
+});
+const nativeMetricKitRecordSchema = z.object({
+  sequence: z.number().int().positive(),
+  kind: z.enum(["metric", "diagnostic"]),
+  receivedAtMs: timestampSchema,
+  rawPayloadBytes: byteCountSchema,
+  truncated: z.boolean(),
+  evidence: z
+    .array(z.object({ path: z.string().min(1).max(120), value: z.string().max(80) }))
+    .max(8),
+});
+const nativeDiagnosticsSnapshotSchema = z.object({
+  currentRun: nativeRunRecordSchema,
+  previousRun: nativeRunRecordSchema.optional(),
+  physicalMemoryBytes: byteCountSchema,
+  osVersion: z.string().min(1).max(64),
+  metricKitRecords: z.array(nativeMetricKitRecordSchema).max(4).optional(),
+});
 
 function compactRunRecord(run: NativeRunRecord): Omit<
   NativeRunRecord,
@@ -193,17 +184,29 @@ function isNativeDiagnosticsAvailable(): boolean {
 
 async function recordSnapshot(reason: "boot" | "foreground" | "heartbeat"): Promise<void> {
   try {
-    const snapshot = await plugin.getSnapshot();
+    const parsed = nativeDiagnosticsSnapshotSchema.safeParse(await plugin.getSnapshot());
+    if (!parsed.success) {
+      diagnosticsLog.warn("snapshot rejected", {
+        reason,
+        issues: parsed.error.issues.slice(0, 4).map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })),
+      });
+      return;
+    }
+    const snapshot: NativeDiagnosticsSnapshot = parsed.data;
     for (const record of snapshot.metricKitRecords ?? []) {
-      if (metricKitRecordIdsLogged.has(record.id)) continue;
-      metricKitRecordIdsLogged.add(record.id);
-      const summary = summarizeMetricKitPayload(record.payloadUTF8);
+      const recordKey = `${record.sequence}:${record.kind}:${record.receivedAtMs}`;
+      if (metricKitRecordKeysLogged.has(recordKey)) continue;
+      metricKitRecordKeysLogged.add(recordKey);
       diagnosticsLog.info("MetricKit evidence", {
-        id: record.id,
+        sequence: record.sequence,
         kind: record.kind,
         receivedAtMs: record.receivedAtMs,
+        rawPayloadBytes: record.rawPayloadBytes,
         rawPayloadTruncated: record.truncated,
-        ...summary,
+        evidence: record.evidence,
       });
     }
     recordRunEvents(snapshot.currentRun, "current");
@@ -247,6 +250,6 @@ export function startNativeDiagnostics(): () => void {
 
 export function resetNativeDiagnosticsForTests(): void {
   previousRunLogged = false;
-  metricKitRecordIdsLogged.clear();
+  metricKitRecordKeysLogged.clear();
   nativeEventIdsLogged.clear();
 }

@@ -2,11 +2,11 @@ import Foundation
 import MetricKit
 import os.log
 
-final class KioskMetricKitCollector: NSObject, MXMetricManagerSubscriber {
-    static let shared = KioskMetricKitCollector()
+final class PanelMetricKitCollector: NSObject, MXMetricManagerSubscriber {
+    static let shared = PanelMetricKitCollector()
 
-    private let archive: KioskMetricKitArchive
-    private var deliveredRecordIds: Set<String> = []
+    private let archive: PanelMetricKitArchive
+    private var deliveredSequences: Set<Int64> = []
     private let deliveryLock = NSLock()
     private var started = false
 
@@ -16,8 +16,8 @@ final class KioskMetricKitCollector: NSObject, MXMetricManagerSubscriber {
             in: .userDomainMask
         ).first ?? FileManager.default.temporaryDirectory
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-        archive = KioskMetricKitArchive(
-            fileURL: support.appendingPathComponent("kiosk-metrickit.json")
+        archive = PanelMetricKitArchive(
+            fileURL: support.appendingPathComponent("panel-metrickit.json")
         )
         super.init()
     }
@@ -32,16 +32,20 @@ final class KioskMetricKitCollector: NSObject, MXMetricManagerSubscriber {
         deliveryLock.lock()
         defer { deliveryLock.unlock() }
 
-        let records = archive.records().filter { !deliveredRecordIds.contains($0.id) }
-        deliveredRecordIds.formUnion(records.map(\.id))
+        let records = archive.records().filter { !deliveredSequences.contains($0.sequence) }
+        deliveredSequences.formUnion(records.map(\.sequence))
         return records.compactMap { record in
             guard
                 let data = try? JSONEncoder().encode(record),
                 let value = try? JSONSerialization.jsonObject(with: data),
-                let dictionary = value as? [String: Any]
+                var dictionary = value as? [String: Any]
             else {
                 return nil
             }
+            // The bounded raw prefix remains available in the durable native
+            // archive. Only the small structured evidence crosses into the web
+            // logger, whose per-entry bound is 2,000 characters.
+            dictionary.removeValue(forKey: "rawPayloadPrefixUTF8")
             return dictionary
         }
     }
@@ -50,24 +54,24 @@ final class KioskMetricKitCollector: NSObject, MXMetricManagerSubscriber {
         let nowMs = Self.nowMs()
         for payload in payloads {
             archive.append(
-                kind: "metric",
+                kind: .metric,
                 receivedAtMs: nowMs,
                 payloadData: payload.jsonRepresentation()
             )
         }
-        os_log("kiosk diagnostics: received %d MetricKit metric payload(s)", payloads.count)
+        os_log("panel diagnostics: received %d MetricKit metric payload(s)", payloads.count)
     }
 
     func didReceive(_ payloads: [MXDiagnosticPayload]) {
         let nowMs = Self.nowMs()
         for payload in payloads {
             archive.append(
-                kind: "diagnostic",
+                kind: .diagnostic,
                 receivedAtMs: nowMs,
                 payloadData: payload.jsonRepresentation()
             )
         }
-        os_log("kiosk diagnostics: received %d MetricKit diagnostic payload(s)", payloads.count)
+        os_log("panel diagnostics: received %d MetricKit diagnostic payload(s)", payloads.count)
     }
 
     private static func nowMs() -> Int64 {

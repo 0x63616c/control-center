@@ -14,8 +14,8 @@ enum KioskLifecycleState: String {
 }
 
 extension Notification.Name {
-    static let kioskMemoryPressureRecoveryRequested = Notification.Name(
-        "co.worldwidewebb.kioskMemoryPressureRecoveryRequested"
+    static let panelMemoryPressureRecoveryRequested = Notification.Name(
+        "co.worldwidewebb.panelMemoryPressureRecoveryRequested"
     )
 }
 
@@ -32,8 +32,8 @@ final class KioskDiagnosticsRecorder {
     static let shared = KioskDiagnosticsRecorder()
 
     private let fileURL: URL
-    private var currentRun: KioskRunRecord?
-    private var previousRun: KioskRunRecord?
+    private var currentRun: PanelRunRecord?
+    private var previousRun: PanelRunRecord?
     private var timer: Timer?
     private var lastCPUSampleSeconds: Double?
     private var lastCPUSampleAtMs: Int64?
@@ -55,7 +55,7 @@ final class KioskDiagnosticsRecorder {
         previousRun = readPersistedRun()
         let now = Self.nowMs()
         let footprint = physicalFootprintBytes()
-        currentRun = KioskRunRecord.fresh(
+        currentRun = PanelRunRecord.fresh(
             runId: UUID().uuidString.lowercased(),
             nowMs: now,
             footprintBytes: footprint
@@ -97,7 +97,7 @@ final class KioskDiagnosticsRecorder {
         if let previousRun {
             result["previousRun"] = dictionary(for: previousRun)
         }
-        let metricKitRecords = KioskMetricKitCollector.shared.takeUndeliveredRecords()
+        let metricKitRecords = PanelMetricKitCollector.shared.takeUndeliveredRecords()
         if !metricKitRecords.isEmpty {
             result["metricKitRecords"] = metricKitRecords
         }
@@ -109,20 +109,20 @@ final class KioskDiagnosticsRecorder {
         sampleAndPersist()
         guard let run = currentRun else { return }
         currentRun?.appendWebContentTermination(
-            KioskWebContentTerminationEvent(
+            PanelWebContentTerminationEvent(
                 timestampMs: Self.nowMs(),
                 lifecycleState: run.lifecycleState,
                 footprintBytes: run.footprintBytes
             )
         )
         persistCurrentRun()
-        os_log("kiosk diagnostics: WebKit content process terminated, footprint=%llu", run.footprintBytes)
+        os_log("panel diagnostics: WebKit content process terminated, footprint=%llu", run.footprintBytes)
     }
 
-    func recordRecovery(trigger: String, outcome: String) {
+    func recordRecovery(trigger: PanelRecoveryTrigger, outcome: PanelRecoveryOutcome) {
         guard currentRun != nil else { return }
         currentRun?.appendRecovery(
-            KioskRecoveryEvent(
+            PanelRecoveryEvent(
                 timestampMs: Self.nowMs(),
                 trigger: trigger,
                 outcome: outcome
@@ -136,7 +136,7 @@ final class KioskDiagnosticsRecorder {
         sampleAndPersist()
         guard let run = currentRun else { return }
         currentRun?.appendMemoryWarning(
-            KioskMemoryWarningEvent(
+            PanelMemoryWarningEvent(
                 timestampMs: Self.nowMs(),
                 lifecycleState: run.lifecycleState,
                 footprintBytes: run.footprintBytes,
@@ -146,8 +146,8 @@ final class KioskDiagnosticsRecorder {
         // Persist before asking the controller to reload: if iOS kills the app
         // during recovery, the warning and exact pre-recovery sample survive.
         persistCurrentRun()
-        os_log("kiosk diagnostics: memory warning, footprint=%llu", run.footprintBytes)
-        NotificationCenter.default.post(name: .kioskMemoryPressureRecoveryRequested, object: nil)
+        os_log("panel diagnostics: memory warning, footprint=%llu", run.footprintBytes)
+        NotificationCenter.default.post(name: .panelMemoryPressureRecoveryRequested, object: nil)
     }
 
     private func sampleAndPersist() {
@@ -187,16 +187,16 @@ final class KioskDiagnosticsRecorder {
             let data = try JSONEncoder().encode(currentRun)
             try data.write(to: fileURL, options: .atomic)
         } catch {
-            os_log("kiosk diagnostics: persist failed: %@", error.localizedDescription)
+            os_log("panel diagnostics: persist failed: %@", error.localizedDescription)
         }
     }
 
-    private func readPersistedRun() -> KioskRunRecord? {
+    private func readPersistedRun() -> PanelRunRecord? {
         guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return try? JSONDecoder().decode(KioskRunRecord.self, from: data)
+        return try? JSONDecoder().decode(PanelRunRecord.self, from: data)
     }
 
-    private func dictionary(for record: KioskRunRecord) -> [String: Any] {
+    private func dictionary(for record: PanelRunRecord) -> [String: Any] {
         guard
             let data = try? JSONEncoder().encode(record),
             let value = try? JSONSerialization.jsonObject(with: data),

@@ -1,33 +1,59 @@
 import Foundation
 
-struct KioskMemoryWarningEvent: Codable {
+struct PanelMemoryWarningEvent: Codable {
     let timestampMs: Int64
     let lifecycleState: String
     let footprintBytes: UInt64
     let peakFootprintBytes: UInt64
 }
 
-struct KioskWebContentTerminationEvent: Codable {
+struct PanelWebContentTerminationEvent: Codable {
     let timestampMs: Int64
     let lifecycleState: String
     let footprintBytes: UInt64
 }
 
-struct KioskRecoveryEvent: Codable {
+enum PanelRecoveryTrigger: String, Codable {
+    case memoryWarning = "memory-warning"
+}
+
+enum PanelRecoveryOutcome: String, Codable {
+    case authenticatedOriginReload = "authenticated-origin-reload"
+    case suppressedByLoopProtection = "suppressed-by-loop-protection"
+}
+
+struct PanelRecoveryEvent: Codable {
     let timestampMs: Int64
-    let trigger: String
-    let outcome: String
+    let trigger: PanelRecoveryTrigger
+    let outcome: PanelRecoveryOutcome
 }
 
-struct KioskMetricKitRecord: Codable {
-    let id: String
-    let kind: String
+enum PanelMetricKitPayloadKind: String, Codable {
+    case metric
+    case diagnostic
+}
+
+struct PanelMetricKitEvidence: Codable {
+    let path: String
+    let value: String
+}
+
+struct PanelMetricKitRecord: Codable {
+    let sequence: Int64
+    let kind: PanelMetricKitPayloadKind
     let receivedAtMs: Int64
-    let payloadUTF8: String
+    let rawPayloadPrefixUTF8: String
+    let rawPayloadBytes: Int
     let truncated: Bool
+    let evidence: [PanelMetricKitEvidence]
 }
 
-final class KioskMetricKitArchive {
+final class PanelMetricKitArchive {
+    private struct EvidenceCandidate {
+        let evidence: PanelMetricKitEvidence
+        let insertionIndex: Int
+    }
+
     private let fileURL: URL
     private let maxRecords: Int
     private let maxPayloadBytes: Int
@@ -39,19 +65,25 @@ final class KioskMetricKitArchive {
         self.maxPayloadBytes = maxPayloadBytes
     }
 
-    func append(kind: String, receivedAtMs: Int64, payloadData: Data) {
+    func append(kind: PanelMetricKitPayloadKind, receivedAtMs: Int64, payloadData: Data) {
         lock.lock()
         defer { lock.unlock() }
 
         var saved = readUnlocked()
         let boundedData = Data(payloadData.prefix(maxPayloadBytes))
+        let nextSequence = (saved.map(\.sequence).max() ?? 0) + 1
         saved.append(
-            KioskMetricKitRecord(
-                id: UUID().uuidString.lowercased(),
+            PanelMetricKitRecord(
+                sequence: nextSequence,
                 kind: kind,
                 receivedAtMs: receivedAtMs,
-                payloadUTF8: String(decoding: boundedData, as: UTF8.self),
-                truncated: payloadData.count > maxPayloadBytes
+                rawPayloadPrefixUTF8: String(decoding: boundedData, as: UTF8.self),
+                rawPayloadBytes: payloadData.count,
+                truncated: payloadData.count > maxPayloadBytes,
+                // Extract from the complete payload before bounding the raw copy.
+                // A byte prefix may not be valid JSON, but the required exit and
+                // peak-memory evidence remains valid structured data.
+                evidence: Self.extractEvidence(from: payloadData)
             )
         )
         saved = Array(saved.suffix(maxRecords))
@@ -59,21 +91,82 @@ final class KioskMetricKitArchive {
         try? data.write(to: fileURL, options: .atomic)
     }
 
-    func records() -> [KioskMetricKitRecord] {
+    func records() -> [PanelMetricKitRecord] {
         lock.lock()
         defer { lock.unlock() }
         return readUnlocked()
     }
 
-    private func readUnlocked() -> [KioskMetricKitRecord] {
+    private func readUnlocked() -> [PanelMetricKitRecord] {
         guard let data = try? Data(contentsOf: fileURL) else { return [] }
-        return (try? JSONDecoder().decode([KioskMetricKitRecord].self, from: data)) ?? []
+        return (try? JSONDecoder().decode([PanelMetricKitRecord].self, from: data)) ?? []
+    }
+
+    private static func extractEvidence(from data: Data) -> [PanelMetricKitEvidence] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) else { return [] }
+        var candidates: [EvidenceCandidate] = []
+
+        func visit(_ value: Any, path: [String]) {
+            guard candidates.count < 200 else { return }
+            if let dictionary = value as? [String: Any] {
+                for (key, child) in dictionary {
+                    visit(child, path: path + [key])
+                }
+                return
+            }
+            if let array = value as? [Any] {
+                for (index, child) in array.enumerated() {
+                    visit(child, path: path + [String(index)])
+                }
+                return
+            }
+
+            let joinedPath = path.joined(separator: ".")
+            guard joinedPath.range(
+                of: "memory|exit|crash|hang|cpu|thermal|termination|peak|jetsam",
+                options: [.regularExpression, .caseInsensitive]
+            ) != nil else { return }
+            let renderedValue = value is NSNull ? "null" : String(describing: value)
+            candidates.append(
+                EvidenceCandidate(
+                    evidence: PanelMetricKitEvidence(
+                        path: String(joinedPath.prefix(120)),
+                        value: String(renderedValue.prefix(80))
+                    ),
+                    insertionIndex: candidates.count
+                )
+            )
+        }
+
+        visit(root, path: [])
+        return candidates
+            .sorted {
+                let leftScore = evidenceScore($0.evidence.path)
+                let rightScore = evidenceScore($1.evidence.path)
+                return leftScore == rightScore
+                    ? $0.insertionIndex < $1.insertionIndex
+                    : leftScore < rightScore
+            }
+            .prefix(8)
+            .map(\.evidence)
+    }
+
+    private static func evidenceScore(_ path: String) -> Int {
+        let lower = path.lowercased()
+        if lower.contains("memoryresourcelimit") || lower.contains("jetsam") { return 0 }
+        if lower.contains("termination") || lower.contains("exit") { return 1 }
+        if lower.contains("peak") && lower.contains("memory") { return 2 }
+        if lower.contains("crash") { return 3 }
+        if lower.contains("hang") { return 4 }
+        if lower.contains("memory") { return 5 }
+        if lower.contains("cpu") { return 6 }
+        return 7
     }
 }
 
 // Persisted across launches. New fields must always decode with defaults so an
 // installed update can consume the smaller record written by an older build.
-struct KioskRunRecord: Codable {
+struct PanelRunRecord: Codable {
     static let eventHistoryLimit = 16
 
     let runId: String
@@ -81,9 +174,9 @@ struct KioskRunRecord: Codable {
     var lastUpdatedAtMs: Int64
     var lifecycleState: String
     var memoryWarnings: Int
-    var warningEvents: [KioskMemoryWarningEvent]
-    var webContentTerminations: [KioskWebContentTerminationEvent]
-    var recoveryEvents: [KioskRecoveryEvent]
+    var warningEvents: [PanelMemoryWarningEvent]
+    var webContentTerminations: [PanelWebContentTerminationEvent]
+    var recoveryEvents: [PanelRecoveryEvent]
     var footprintBytes: UInt64
     var peakFootprintBytes: UInt64
     var cpuTimeSeconds: Double
@@ -94,8 +187,8 @@ struct KioskRunRecord: Codable {
     var appUptimeSeconds: Double
     var systemUptimeSeconds: Double
 
-    static func fresh(runId: String, nowMs: Int64, footprintBytes: UInt64) -> KioskRunRecord {
-        KioskRunRecord(
+    static func fresh(runId: String, nowMs: Int64, footprintBytes: UInt64) -> PanelRunRecord {
+        PanelRunRecord(
             runId: runId,
             startedAtMs: nowMs,
             lastUpdatedAtMs: nowMs,
@@ -116,40 +209,27 @@ struct KioskRunRecord: Codable {
         )
     }
 
-    mutating func appendMemoryWarning(_ event: KioskMemoryWarningEvent) {
+    mutating func appendMemoryWarning(_ event: PanelMemoryWarningEvent) {
         memoryWarnings += 1
         warningEvents.append(event)
         warningEvents = Array(warningEvents.suffix(Self.eventHistoryLimit))
     }
 
-    mutating func appendWebContentTermination(_ event: KioskWebContentTerminationEvent) {
+    mutating func appendWebContentTermination(_ event: PanelWebContentTerminationEvent) {
         webContentTerminations.append(event)
         webContentTerminations = Array(webContentTerminations.suffix(Self.eventHistoryLimit))
     }
 
-    mutating func appendRecovery(_ event: KioskRecoveryEvent) {
+    mutating func appendRecovery(_ event: PanelRecoveryEvent) {
         recoveryEvents.append(event)
         recoveryEvents = Array(recoveryEvents.suffix(Self.eventHistoryLimit))
     }
 
     private enum CodingKeys: String, CodingKey {
-        case runId
-        case startedAtMs
-        case lastUpdatedAtMs
-        case lifecycleState
-        case memoryWarnings
-        case warningEvents
-        case webContentTerminations
-        case recoveryEvents
-        case footprintBytes
-        case peakFootprintBytes
-        case cpuTimeSeconds
-        case cpuPercentOfOneCore
-        case thermalState
-        case batteryLevel
-        case batteryState
-        case appUptimeSeconds
-        case systemUptimeSeconds
+        case runId, startedAtMs, lastUpdatedAtMs, lifecycleState, memoryWarnings
+        case warningEvents, webContentTerminations, recoveryEvents
+        case footprintBytes, peakFootprintBytes, cpuTimeSeconds, cpuPercentOfOneCore
+        case thermalState, batteryLevel, batteryState, appUptimeSeconds, systemUptimeSeconds
     }
 
     init(from decoder: Decoder) throws {
@@ -159,12 +239,12 @@ struct KioskRunRecord: Codable {
         lastUpdatedAtMs = try values.decode(Int64.self, forKey: .lastUpdatedAtMs)
         lifecycleState = try values.decode(String.self, forKey: .lifecycleState)
         memoryWarnings = try values.decodeIfPresent(Int.self, forKey: .memoryWarnings) ?? 0
-        warningEvents = try values.decodeIfPresent([KioskMemoryWarningEvent].self, forKey: .warningEvents) ?? []
+        warningEvents = try values.decodeIfPresent([PanelMemoryWarningEvent].self, forKey: .warningEvents) ?? []
         webContentTerminations = try values.decodeIfPresent(
-            [KioskWebContentTerminationEvent].self,
+            [PanelWebContentTerminationEvent].self,
             forKey: .webContentTerminations
         ) ?? []
-        recoveryEvents = try values.decodeIfPresent([KioskRecoveryEvent].self, forKey: .recoveryEvents) ?? []
+        recoveryEvents = try values.decodeIfPresent([PanelRecoveryEvent].self, forKey: .recoveryEvents) ?? []
         footprintBytes = try values.decodeIfPresent(UInt64.self, forKey: .footprintBytes) ?? 0
         peakFootprintBytes = try values.decodeIfPresent(UInt64.self, forKey: .peakFootprintBytes) ?? footprintBytes
         cpuTimeSeconds = try values.decodeIfPresent(Double.self, forKey: .cpuTimeSeconds) ?? 0
@@ -182,9 +262,9 @@ struct KioskRunRecord: Codable {
         lastUpdatedAtMs: Int64,
         lifecycleState: String,
         memoryWarnings: Int,
-        warningEvents: [KioskMemoryWarningEvent],
-        webContentTerminations: [KioskWebContentTerminationEvent],
-        recoveryEvents: [KioskRecoveryEvent],
+        warningEvents: [PanelMemoryWarningEvent],
+        webContentTerminations: [PanelWebContentTerminationEvent],
+        recoveryEvents: [PanelRecoveryEvent],
         footprintBytes: UInt64,
         peakFootprintBytes: UInt64,
         cpuTimeSeconds: Double,

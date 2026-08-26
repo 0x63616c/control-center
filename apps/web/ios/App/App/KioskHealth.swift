@@ -128,7 +128,7 @@ struct Backoff {
 // Pure decision core for the native memory-warning recovery path (T-51).
 // Recovery itself belongs to KioskViewController; this type only owns the
 // bounded policy so it can be proven without UIKit or an iOS simulator.
-struct MemoryPressureRecoveryPolicy {
+struct PanelMemoryPressureRecoveryPolicy {
     let cooldownMs: Int64
     let windowMs: Int64
     let maxRecoveriesPerWindow: Int

@@ -610,8 +610,9 @@ external debugger can attach to:
   alerting
 - MetricKit app-exit, peak-memory, crash, hang, CPU and termination evidence is
   retained independently across launches (newest four payloads, at most 64 KiB
-  each). Raw JSON remains in the native archive; `frontend_log` receives a
-  deterministic summary of at most eight relevant values so the logger's
+  each). A bounded raw prefix remains in the native archive, while a structured
+  summary is extracted from the complete payload before that bound is applied;
+  `frontend_log` receives at most eight relevant values so the logger's
   2,000-character per-entry bound cannot clip the evidence unpredictably.
   MetricKit delivery is asynchronous and may arrive well after the causative
   exit; absence in the first post-restart snapshot is not evidence of absence

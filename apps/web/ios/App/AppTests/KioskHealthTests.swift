@@ -117,7 +117,7 @@ enum KioskHealthTests {
         // A warning is the last signal iOS gives us before the abrupt exits seen
         // on Builds 102/103. Recover the hosted document immediately, but never
         // permit warning storms to turn into an unattended reload loop.
-        var pressure = MemoryPressureRecoveryPolicy(
+        var pressure = PanelMemoryPressureRecoveryPolicy(
             cooldownMs: 15 * 60 * 1_000,
             windowMs: 60 * 60 * 1_000,
             maxRecoveriesPerWindow: 3
@@ -154,7 +154,7 @@ enum KioskHealthTests {
         {"runId":"legacy","startedAtMs":10,"lastUpdatedAtMs":20,"lifecycleState":"active","memoryWarnings":2,"footprintBytes":100,"peakFootprintBytes":200}
         """.data(using: .utf8)!
         do {
-            let legacy = try JSONDecoder().decode(KioskRunRecord.self, from: build103JSON)
+            let legacy = try JSONDecoder().decode(PanelRunRecord.self, from: build103JSON)
             Check.expect(legacy.runId == "legacy", "Build 104 decodes a Build 103 run record")
             Check.expect(legacy.warningEvents.isEmpty, "missing warning history defaults to empty")
             Check.expect(legacy.webContentTerminations.isEmpty, "missing WebKit history defaults to empty")
@@ -162,10 +162,10 @@ enum KioskHealthTests {
             Check.expect(false, "Build 103 record should decode: \(error)")
         }
 
-        var bounded = KioskRunRecord.fresh(runId: "bounded", nowMs: 1, footprintBytes: 10)
+        var bounded = PanelRunRecord.fresh(runId: "bounded", nowMs: 1, footprintBytes: 10)
         for index in 0..<40 {
             bounded.appendMemoryWarning(
-                KioskMemoryWarningEvent(
+                PanelMemoryWarningEvent(
                     timestampMs: Int64(index),
                     lifecycleState: "active",
                     footprintBytes: UInt64(index),
@@ -174,7 +174,7 @@ enum KioskHealthTests {
             )
         }
         Check.expect(bounded.memoryWarnings == 40, "total memory-warning count is unbounded and exact")
-        Check.expect(bounded.warningEvents.count == KioskRunRecord.eventHistoryLimit, "warning history is bounded")
+        Check.expect(bounded.warningEvents.count == PanelRunRecord.eventHistoryLimit, "warning history is bounded")
         Check.expect(bounded.warningEvents.first?.timestampMs == 24, "bounded history retains the newest warning events")
 
         // MetricKit can deliver exit/peak-memory evidence hours after the event.
@@ -183,23 +183,36 @@ enum KioskHealthTests {
         let metricFile = FileManager.default.temporaryDirectory
             .appendingPathComponent("kiosk-metrickit-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: metricFile) }
-        let metricArchive = KioskMetricKitArchive(
+        let metricArchive = PanelMetricKitArchive(
             fileURL: metricFile,
             maxRecords: 2,
-            maxPayloadBytes: 8
+            maxPayloadBytes: 24
         )
-        metricArchive.append(kind: "metric", receivedAtMs: 1, payloadData: Data("first".utf8))
-        metricArchive.append(kind: "diagnostic", receivedAtMs: 2, payloadData: Data("1234567890".utf8))
-        metricArchive.append(kind: "metric", receivedAtMs: 3, payloadData: Data("third".utf8))
+        metricArchive.append(kind: .metric, receivedAtMs: 1, payloadData: Data("{\"irrelevant\":true}".utf8))
+        let largeMetricJSON = """
+        {"applicationMemoryMetrics":{"peakMemoryUsage":123},"applicationExitMetrics":{"cumulativeMemoryResourceLimitExitCount":2}}
+        """
+        metricArchive.append(kind: .diagnostic, receivedAtMs: 2, payloadData: Data(largeMetricJSON.utf8))
+        metricArchive.append(kind: .metric, receivedAtMs: 3, payloadData: Data("{\"cpuTime\":9}".utf8))
         let metricRecords = metricArchive.records()
         Check.expect(metricRecords.count == 2, "MetricKit archive retains only its record bound")
         Check.expect(metricRecords.first?.receivedAtMs == 2, "MetricKit archive evicts the oldest payload")
-        Check.expect(metricRecords.first?.payloadUTF8 == "12345678", "MetricKit payload bytes are capped")
+        Check.expect(metricRecords.first?.rawPayloadPrefixUTF8.utf8.count == 24, "MetricKit raw payload bytes are capped")
         Check.expect(metricRecords.first?.truncated == true, "truncated MetricKit payload is marked")
-        let reopenedArchive = KioskMetricKitArchive(
+        Check.expect(
+            metricRecords.first?.evidence.contains { $0.path.contains("peakMemoryUsage") && $0.value == "123" } == true,
+            "peak-memory evidence survives raw payload truncation"
+        )
+        Check.expect(
+            metricRecords.first?.evidence.contains {
+                $0.path.contains("cumulativeMemoryResourceLimitExitCount") && $0.value == "2"
+            } == true,
+            "app-exit evidence survives raw payload truncation"
+        )
+        let reopenedArchive = PanelMetricKitArchive(
             fileURL: metricFile,
             maxRecords: 2,
-            maxPayloadBytes: 8
+            maxPayloadBytes: 24
         )
         Check.expect(reopenedArchive.records().count == 2, "MetricKit archive survives a process restart")
 

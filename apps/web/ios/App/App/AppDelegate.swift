@@ -10,7 +10,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions _: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         application.isIdleTimerDisabled = true
         KioskDiagnosticsRecorder.shared.start()
-        KioskMetricKitCollector.shared.start()
+        PanelMetricKitCollector.shared.start()
         requestCameraAccessUpFront()
         configureAudioSession()
         return true

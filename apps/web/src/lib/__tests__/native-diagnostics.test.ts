@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getTail } from "../log/logger";
 import { resetNativeDiagnosticsForTests, startNativeDiagnostics } from "../native-diagnostics";
 
-const getSnapshot = vi.fn(() =>
+const getSnapshot = vi.fn<() => Promise<unknown>>(() =>
   Promise.resolve({
     currentRun: {
       runId: "current",
@@ -54,12 +54,18 @@ const getSnapshot = vi.fn(() =>
     osVersion: "test",
     metricKitRecords: [
       {
-        id: "metric-1",
+        sequence: 1,
         kind: "metric",
         receivedAtMs: 5,
-        payloadUTF8:
-          '{"applicationMemoryMetrics":{"peakMemoryUsage":123},"applicationExitMetrics":{"cumulativeMemoryResourceLimitExitCount":2},"irrelevant":{"networkRequests":999}}',
-        truncated: false,
+        rawPayloadBytes: 70_000,
+        truncated: true,
+        evidence: [
+          { path: "applicationMemoryMetrics.peakMemoryUsage", value: "123" },
+          {
+            path: "applicationExitMetrics.cumulativeMemoryResourceLimitExitCount",
+            value: "2",
+          },
+        ],
       },
     ],
   }),
@@ -128,11 +134,11 @@ describe("startNativeDiagnostics", () => {
       );
     expect(metricEntries).toHaveLength(1);
     expect(metricEntries[0]?.data).toMatchObject({
-      id: "metric-1",
+      sequence: 1,
       kind: "metric",
       evidence: expect.arrayContaining([
-        { path: "applicationMemoryMetrics.peakMemoryUsage", value: 123 },
-        { path: "applicationExitMetrics.cumulativeMemoryResourceLimitExitCount", value: 2 },
+        { path: "applicationMemoryMetrics.peakMemoryUsage", value: "123" },
+        { path: "applicationExitMetrics.cumulativeMemoryResourceLimitExitCount", value: "2" },
       ]),
     });
     expect(JSON.stringify(metricEntries[0]?.data)).not.toContain("networkRequests");
@@ -150,6 +156,28 @@ describe("startNativeDiagnostics", () => {
       timestampMs: 2,
       footprintBytes: 100,
     });
+    stop();
+  });
+
+  it("rejects a version-skewed native payload at the plugin boundary", async () => {
+    isNative.mockReturnValue(true);
+    hasPlugin.mockReturnValue(true);
+    getSnapshot.mockResolvedValueOnce({ currentRun: { runId: "incomplete" } });
+    const before = getTail().length;
+
+    const stop = startNativeDiagnostics();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const entries = getTail()
+      .slice(before)
+      .filter((entry) => entry.source === "native-diagnostics");
+    expect(entries).toEqual([
+      expect.objectContaining({
+        level: "warn",
+        msg: "snapshot rejected",
+        data: expect.objectContaining({ reason: "boot" }),
+      }),
+    ]);
     stop();
   });
 });

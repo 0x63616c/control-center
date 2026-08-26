@@ -34,7 +34,7 @@ class KioskViewController: CAPBridgeViewController {
     private var watchdog: KioskWatchdog?
     private var navigationDelegateProxy: KioskNavigationDelegateProxy?
     private var observesMemoryPressure = false
-    private var memoryPressurePolicy = MemoryPressureRecoveryPolicy(
+    private var memoryPressurePolicy = PanelMemoryPressureRecoveryPolicy(
         cooldownMs: 15 * 60 * 1_000,
         windowMs: 60 * 60 * 1_000,
         maxRecoveriesPerWindow: 3
@@ -123,7 +123,7 @@ class KioskViewController: CAPBridgeViewController {
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(recoverFromMemoryPressure),
-            name: .kioskMemoryPressureRecoveryRequested,
+            name: .panelMemoryPressureRecoveryRequested,
             object: nil
         )
         observesMemoryPressure = true
@@ -133,15 +133,15 @@ class KioskViewController: CAPBridgeViewController {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
         guard memoryPressurePolicy.shouldRecover(atMs: nowMs) else {
             KioskDiagnosticsRecorder.shared.recordRecovery(
-                trigger: "memory-warning",
-                outcome: "suppressed-by-loop-protection"
+                trigger: .memoryWarning,
+                outcome: .suppressedByLoopProtection
             )
             return
         }
 
         KioskDiagnosticsRecorder.shared.recordRecovery(
-            trigger: "memory-warning",
-            outcome: "authenticated-origin-reload"
+            trigger: .memoryWarning,
+            outcome: .authenticatedOriginReload
         )
         loadAuthenticatedOrigin()
     }
