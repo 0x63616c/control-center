@@ -79,6 +79,27 @@ vi.mock("@capacitor/core", () => ({
 const isNative = vi.mocked(Capacitor.isNativePlatform);
 const hasPlugin = vi.mocked(Capacitor.isPluginAvailable);
 
+function build104RunWithoutBatteryLevel(runId: string) {
+  return {
+    runId,
+    startedAtMs: 1,
+    lastUpdatedAtMs: 2,
+    lifecycleState: "active",
+    memoryWarnings: 0,
+    warningEvents: [],
+    webContentTerminations: [],
+    recoveryEvents: [],
+    footprintBytes: 100,
+    peakFootprintBytes: 120,
+    cpuTimeSeconds: 42,
+    cpuPercentOfOneCore: 7.5,
+    thermalState: "nominal",
+    batteryState: "unknown",
+    appUptimeSeconds: 3_600,
+    systemUptimeSeconds: 86_400,
+  };
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
@@ -207,42 +228,8 @@ describe("startNativeDiagnostics", () => {
     isNative.mockReturnValue(true);
     hasPlugin.mockReturnValue(true);
     getSnapshot.mockResolvedValueOnce({
-      currentRun: {
-        runId: "build-104-current",
-        startedAtMs: 1,
-        lastUpdatedAtMs: 2,
-        lifecycleState: "active",
-        memoryWarnings: 0,
-        warningEvents: [],
-        webContentTerminations: [],
-        recoveryEvents: [],
-        footprintBytes: 100,
-        peakFootprintBytes: 120,
-        cpuTimeSeconds: 42,
-        cpuPercentOfOneCore: 7.5,
-        thermalState: "nominal",
-        batteryState: "unknown",
-        appUptimeSeconds: 3_600,
-        systemUptimeSeconds: 86_400,
-      },
-      previousRun: {
-        runId: "build-104-previous",
-        startedAtMs: 3,
-        lastUpdatedAtMs: 4,
-        lifecycleState: "active",
-        memoryWarnings: 0,
-        warningEvents: [],
-        webContentTerminations: [],
-        recoveryEvents: [],
-        footprintBytes: 900,
-        peakFootprintBytes: 950,
-        cpuTimeSeconds: 100,
-        cpuPercentOfOneCore: 3,
-        thermalState: "fair",
-        batteryState: "unknown",
-        appUptimeSeconds: 31_000,
-        systemUptimeSeconds: 120_000,
-      },
+      currentRun: build104RunWithoutBatteryLevel("build-104-current"),
+      previousRun: build104RunWithoutBatteryLevel("build-104-previous"),
       physicalMemoryBytes: 6_000,
       osVersion: "18.7.8",
     });
