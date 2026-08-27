@@ -203,6 +203,76 @@ describe("startNativeDiagnostics", () => {
     stop();
   });
 
+  it("records Build 104 diagnostics when iOS omits an unavailable battery level", async () => {
+    isNative.mockReturnValue(true);
+    hasPlugin.mockReturnValue(true);
+    getSnapshot.mockResolvedValueOnce({
+      currentRun: {
+        runId: "build-104-current",
+        startedAtMs: 1,
+        lastUpdatedAtMs: 2,
+        lifecycleState: "active",
+        memoryWarnings: 0,
+        warningEvents: [],
+        webContentTerminations: [],
+        recoveryEvents: [],
+        footprintBytes: 100,
+        peakFootprintBytes: 120,
+        cpuTimeSeconds: 42,
+        cpuPercentOfOneCore: 7.5,
+        thermalState: "nominal",
+        batteryState: "unknown",
+        appUptimeSeconds: 3_600,
+        systemUptimeSeconds: 86_400,
+      },
+      previousRun: {
+        runId: "build-104-previous",
+        startedAtMs: 3,
+        lastUpdatedAtMs: 4,
+        lifecycleState: "active",
+        memoryWarnings: 0,
+        warningEvents: [],
+        webContentTerminations: [],
+        recoveryEvents: [],
+        footprintBytes: 900,
+        peakFootprintBytes: 950,
+        cpuTimeSeconds: 100,
+        cpuPercentOfOneCore: 3,
+        thermalState: "fair",
+        batteryState: "unknown",
+        appUptimeSeconds: 31_000,
+        systemUptimeSeconds: 120_000,
+      },
+      physicalMemoryBytes: 6_000,
+      osVersion: "18.7.8",
+    });
+    const before = getTail().length;
+
+    const stop = startNativeDiagnostics();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const entries = getTail()
+      .slice(before)
+      .filter((entry) => entry.source === "native-diagnostics");
+    expect(entries).toEqual([
+      expect.objectContaining({
+        level: "info",
+        msg: "process snapshot",
+        data: expect.objectContaining({
+          currentRun: expect.objectContaining({
+            diagnosticsSchema: "build-104",
+            batteryLevel: null,
+          }),
+          previousRun: expect.objectContaining({
+            diagnosticsSchema: "build-104",
+            batteryLevel: null,
+          }),
+        }),
+      }),
+    ]);
+    stop();
+  });
+
   it("rejects a version-skewed native payload at the plugin boundary", async () => {
     isNative.mockReturnValue(true);
     hasPlugin.mockReturnValue(true);
