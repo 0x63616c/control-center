@@ -67,7 +67,13 @@ const nativeRunRecordBuild104Schema = nativeRunRecordBaseSchema
     cpuTimeSeconds: z.number().finite().nonnegative(),
     cpuPercentOfOneCore: z.number().finite().nonnegative(),
     thermalState: z.enum(["nominal", "fair", "serious", "critical", "unknown"]),
-    batteryLevel: z.number().finite().min(0).max(100).nullable(),
+    batteryLevel: z
+      .number()
+      .finite()
+      .min(0)
+      .max(100)
+      .nullish()
+      .transform((level) => level ?? null),
     batteryState: z.enum(["unknown", "unplugged", "charging", "full"]),
     appUptimeSeconds: z.number().finite().nonnegative(),
     systemUptimeSeconds: z.number().finite().nonnegative(),

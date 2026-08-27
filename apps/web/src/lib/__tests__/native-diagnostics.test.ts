@@ -79,6 +79,27 @@ vi.mock("@capacitor/core", () => ({
 const isNative = vi.mocked(Capacitor.isNativePlatform);
 const hasPlugin = vi.mocked(Capacitor.isPluginAvailable);
 
+function build104RunWithoutBatteryLevel(runId: string) {
+  return {
+    runId,
+    startedAtMs: 1,
+    lastUpdatedAtMs: 2,
+    lifecycleState: "active",
+    memoryWarnings: 0,
+    warningEvents: [],
+    webContentTerminations: [],
+    recoveryEvents: [],
+    footprintBytes: 100,
+    peakFootprintBytes: 120,
+    cpuTimeSeconds: 42,
+    cpuPercentOfOneCore: 7.5,
+    thermalState: "nominal",
+    batteryState: "unknown",
+    appUptimeSeconds: 3_600,
+    systemUptimeSeconds: 86_400,
+  };
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
@@ -196,6 +217,42 @@ describe("startNativeDiagnostics", () => {
             diagnosticsSchema: "build-103",
             cpuTimeSeconds: null,
             warningEventHistoryCount: 0,
+          }),
+        }),
+      }),
+    ]);
+    stop();
+  });
+
+  it("records Build 104 diagnostics when iOS omits an unavailable battery level", async () => {
+    isNative.mockReturnValue(true);
+    hasPlugin.mockReturnValue(true);
+    getSnapshot.mockResolvedValueOnce({
+      currentRun: build104RunWithoutBatteryLevel("build-104-current"),
+      previousRun: build104RunWithoutBatteryLevel("build-104-previous"),
+      physicalMemoryBytes: 6_000,
+      osVersion: "18.7.8",
+    });
+    const before = getTail().length;
+
+    const stop = startNativeDiagnostics();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const entries = getTail()
+      .slice(before)
+      .filter((entry) => entry.source === "native-diagnostics");
+    expect(entries).toEqual([
+      expect.objectContaining({
+        level: "info",
+        msg: "process snapshot",
+        data: expect.objectContaining({
+          currentRun: expect.objectContaining({
+            diagnosticsSchema: "build-104",
+            batteryLevel: null,
+          }),
+          previousRun: expect.objectContaining({
+            diagnosticsSchema: "build-104",
+            batteryLevel: null,
           }),
         }),
       }),
