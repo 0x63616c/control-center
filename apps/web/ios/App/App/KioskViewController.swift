@@ -8,6 +8,7 @@ import WebKit
 // framework's recovery behavior remains intact.
 private final class KioskNavigationDelegateProxy: NSObject, WKNavigationDelegate {
     weak var downstream: WKNavigationDelegate?
+    var onNextNavigationFinished: (() -> Void)?
 
     init(downstream: WKNavigationDelegate?) {
         self.downstream = downstream
@@ -16,6 +17,13 @@ private final class KioskNavigationDelegateProxy: NSObject, WKNavigationDelegate
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         KioskDiagnosticsRecorder.shared.recordWebContentTermination()
         downstream?.webViewWebContentProcessDidTerminate?(webView)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        downstream?.webView?(webView, didFinish: navigation)
+        let completion = onNextNavigationFinished
+        onNextNavigationFinished = nil
+        completion?()
     }
 
     override func responds(to selector: Selector!) -> Bool {
@@ -131,19 +139,42 @@ class KioskViewController: CAPBridgeViewController {
 
     @objc private func recoverFromMemoryPressure() {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
-        guard memoryPressurePolicy.shouldRecover(atMs: nowMs) else {
+        switch memoryPressurePolicy.action(atMs: nowMs) {
+        case .authenticatedOriginReload:
+            KioskDiagnosticsRecorder.shared.recordRecovery(
+                trigger: .memoryWarning,
+                outcome: .authenticatedOriginReload
+            )
+            loadAuthenticatedOrigin()
+        case .stagedWebDocumentReset:
+            KioskDiagnosticsRecorder.shared.recordRecovery(
+                trigger: .memoryWarning,
+                outcome: .stagedWebDocumentReset
+            )
+            stageAuthenticatedOriginReset()
+        case .suppressedByLoopProtection:
             KioskDiagnosticsRecorder.shared.recordRecovery(
                 trigger: .memoryWarning,
                 outcome: .suppressedByLoopProtection
             )
+        }
+    }
+
+    private func stageAuthenticatedOriginReset() {
+        guard let webView, let navigationDelegateProxy else {
+            loadAuthenticatedOrigin()
             return
         }
-
-        KioskDiagnosticsRecorder.shared.recordRecovery(
-            trigger: .memoryWarning,
-            outcome: .authenticatedOriginReload
-        )
-        loadAuthenticatedOrigin()
+        webView.stopLoading()
+        // A same-origin navigation replaces the document but lets WebKit retain
+        // its old graph while the new response is fetched. Commit a tiny inert
+        // document first so repeated pressure gets one stronger, public-API-only
+        // teardown without clearing cookies, website data, or feature state.
+        navigationDelegateProxy.onNextNavigationFinished = { [weak self, weak webView] in
+            guard let self, let webView, self.webView === webView else { return }
+            self.loadAuthenticatedOrigin()
+        }
+        webView.loadHTMLString("<!doctype html><title>Recovering</title>", baseURL: nil)
     }
 
     // The kiosk is unattended, so it must recover on its own from a Cloudflare
