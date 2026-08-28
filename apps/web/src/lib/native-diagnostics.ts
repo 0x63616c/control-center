@@ -48,7 +48,11 @@ const webContentTerminationEventSchema = z.object({
 const recoveryEventSchema = z.object({
   timestampMs: timestampSchema,
   trigger: z.literal("memory-warning"),
-  outcome: z.enum(["authenticated-origin-reload", "suppressed-by-loop-protection"]),
+  outcome: z.enum([
+    "authenticated-origin-reload",
+    "staged-web-document-reset",
+    "suppressed-by-loop-protection",
+  ]),
 });
 const nativeRunRecordBaseSchema = z.object({
   runId: z.string().min(1).max(128),

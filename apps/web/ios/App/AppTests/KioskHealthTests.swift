@@ -123,25 +123,29 @@ enum KioskHealthTests {
             maxRecoveriesPerWindow: 3
         )
         let firstWarning = Int64(1_000_000)
-        Check.expect(pressure.shouldRecover(atMs: firstWarning), "first memory warning triggers recovery")
+        let repeatedWarning = firstWarning + 192 * 1_000
         Check.expect(
-            !pressure.shouldRecover(atMs: firstWarning + 14 * 60 * 1_000),
-            "warning inside the 15-minute cooldown is suppressed"
+            pressure.action(atMs: firstWarning) == .authenticatedOriginReload,
+            "first memory warning triggers an authenticated origin reload"
         )
         Check.expect(
-            pressure.shouldRecover(atMs: firstWarning + 15 * 60 * 1_000),
+            pressure.action(atMs: repeatedWarning) == .stagedWebDocumentReset,
+            "the first repeated warning escalates to a staged document reset"
+        )
+        Check.expect(
+            pressure.action(atMs: firstWarning + 4 * 60 * 1_000) == .suppressedByLoopProtection,
+            "further warnings inside the cooldown are suppressed"
+        )
+        Check.expect(
+            pressure.action(atMs: repeatedWarning + 15 * 60 * 1_000) == .authenticatedOriginReload,
             "warning at the cooldown boundary can recover"
         )
         Check.expect(
-            pressure.shouldRecover(atMs: firstWarning + 30 * 60 * 1_000),
-            "a third spaced warning can recover"
+            pressure.action(atMs: repeatedWarning + 30 * 60 * 1_000) == .suppressedByLoopProtection,
+            "rolling-window cap includes the staged escalation"
         )
         Check.expect(
-            !pressure.shouldRecover(atMs: firstWarning + 45 * 60 * 1_000),
-            "rolling-window cap prevents a reload loop"
-        )
-        Check.expect(
-            pressure.shouldRecover(atMs: firstWarning + 61 * 60 * 1_000),
+            pressure.action(atMs: firstWarning + 61 * 60 * 1_000) == .authenticatedOriginReload,
             "recovery resumes after the oldest attempt leaves the window"
         )
         Check.expect(pressure.recoveryCount == 3, "policy retains only rolling-window recovery timestamps")

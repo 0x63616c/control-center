@@ -20,7 +20,13 @@ const getSnapshot = vi.fn<() => Promise<unknown>>(() =>
         },
       ],
       webContentTerminations: [],
-      recoveryEvents: [],
+      recoveryEvents: [
+        {
+          timestampMs: 3,
+          trigger: "memory-warning",
+          outcome: "staged-web-document-reset",
+        },
+      ],
       footprintBytes: 100,
       peakFootprintBytes: 120,
       cpuTimeSeconds: 42,
@@ -177,6 +183,22 @@ describe("startNativeDiagnostics", () => {
       timestampMs: 2,
       footprintBytes: 100,
     });
+    const recoveryEntries = getTail()
+      .slice(before)
+      .filter(
+        (entry) =>
+          entry.source === "native-diagnostics" && entry.msg === "memory pressure recovery",
+      );
+    expect(recoveryEntries).toEqual([
+      expect.objectContaining({
+        level: "info",
+        data: expect.objectContaining({
+          runId: "current",
+          runOrigin: "current",
+          outcome: "staged-web-document-reset",
+        }),
+      }),
+    ]);
     stop();
   });
 

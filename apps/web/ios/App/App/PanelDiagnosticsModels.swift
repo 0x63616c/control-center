@@ -19,6 +19,7 @@ enum PanelRecoveryTrigger: String, Codable {
 
 enum PanelRecoveryOutcome: String, Codable {
     case authenticatedOriginReload = "authenticated-origin-reload"
+    case stagedWebDocumentReset = "staged-web-document-reset"
     case suppressedByLoopProtection = "suppressed-by-loop-protection"
 }
 

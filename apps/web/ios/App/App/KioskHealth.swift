@@ -128,29 +128,46 @@ struct Backoff {
 // Pure decision core for the native memory-warning recovery path (T-51).
 // Recovery itself belongs to KioskViewController; this type only owns the
 // bounded policy so it can be proven without UIKit or an iOS simulator.
+enum PanelMemoryPressureRecoveryAction {
+    case authenticatedOriginReload
+    case stagedWebDocumentReset
+    case suppressedByLoopProtection
+}
+
 struct PanelMemoryPressureRecoveryPolicy {
     let cooldownMs: Int64
     let windowMs: Int64
     let maxRecoveriesPerWindow: Int
 
-    private(set) var recoveryTimestampsMs: [Int64] = []
+    private var recoveries: [(timestampMs: Int64, action: PanelMemoryPressureRecoveryAction)] = []
 
-    var recoveryCount: Int {
-        recoveryTimestampsMs.count
+    init(cooldownMs: Int64, windowMs: Int64, maxRecoveriesPerWindow: Int) {
+        self.cooldownMs = cooldownMs
+        self.windowMs = windowMs
+        self.maxRecoveriesPerWindow = maxRecoveriesPerWindow
     }
 
-    mutating func shouldRecover(atMs nowMs: Int64) -> Bool {
+    var recoveryCount: Int {
+        recoveries.count
+    }
+
+    mutating func action(atMs nowMs: Int64) -> PanelMemoryPressureRecoveryAction {
         let windowStart = nowMs - windowMs
-        recoveryTimestampsMs.removeAll { $0 < windowStart }
+        recoveries.removeAll { $0.timestampMs < windowStart }
 
-        if let latest = recoveryTimestampsMs.last, nowMs - latest < cooldownMs {
-            return false
+        if let latest = recoveries.last, nowMs - latest.timestampMs < cooldownMs {
+            let stagedResetAlreadyUsed = recoveries.contains { $0.action == .stagedWebDocumentReset }
+            guard !stagedResetAlreadyUsed, recoveries.count < maxRecoveriesPerWindow else {
+                return .suppressedByLoopProtection
+            }
+            recoveries.append((nowMs, .stagedWebDocumentReset))
+            return .stagedWebDocumentReset
         }
-        guard recoveryTimestampsMs.count < maxRecoveriesPerWindow else {
-            return false
+        guard recoveries.count < maxRecoveriesPerWindow else {
+            return .suppressedByLoopProtection
         }
 
-        recoveryTimestampsMs.append(nowMs)
-        return true
+        recoveries.append((nowMs, .authenticatedOriginReload))
+        return .authenticatedOriginReload
     }
 }
