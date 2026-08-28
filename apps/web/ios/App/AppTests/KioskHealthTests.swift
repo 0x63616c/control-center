@@ -137,18 +137,18 @@ enum KioskHealthTests {
             "further warnings inside the cooldown are suppressed"
         )
         Check.expect(
-            pressure.action(atMs: repeatedWarning + 15 * 60 * 1_000) == .authenticatedOriginReload,
-            "warning at the cooldown boundary can recover"
+            pressure.action(atMs: repeatedWarning + 15 * 60 * 1_000) == .suppressedByLoopProtection,
+            "later warnings remain suppressed for the rolling hour after escalation"
         )
         Check.expect(
             pressure.action(atMs: repeatedWarning + 30 * 60 * 1_000) == .suppressedByLoopProtection,
-            "rolling-window cap includes the staged escalation"
+            "rolling-window suppression remains bounded"
         )
         Check.expect(
-            pressure.action(atMs: firstWarning + 61 * 60 * 1_000) == .authenticatedOriginReload,
-            "recovery resumes after the oldest attempt leaves the window"
+            pressure.action(atMs: repeatedWarning + 61 * 60 * 1_000) == .authenticatedOriginReload,
+            "recovery resumes after the staged escalation leaves the window"
         )
-        Check.expect(pressure.recoveryCount == 3, "policy retains only rolling-window recovery timestamps")
+        Check.expect(pressure.recoveryCount == 1, "policy retains only rolling-window recovery timestamps")
 
         // --- Durable diagnostics compatibility + bounds (T-51) ---
         // Build 104 must decode the smaller Build 103 record already persisted

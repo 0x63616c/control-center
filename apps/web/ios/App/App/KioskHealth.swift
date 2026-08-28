@@ -155,9 +155,12 @@ struct PanelMemoryPressureRecoveryPolicy {
         let windowStart = nowMs - windowMs
         recoveries.removeAll { $0.timestampMs < windowStart }
 
+        if recoveries.contains(where: { $0.action == .stagedWebDocumentReset }) {
+            return .suppressedByLoopProtection
+        }
+
         if let latest = recoveries.last, nowMs - latest.timestampMs < cooldownMs {
-            let stagedResetAlreadyUsed = recoveries.contains { $0.action == .stagedWebDocumentReset }
-            guard !stagedResetAlreadyUsed, recoveries.count < maxRecoveriesPerWindow else {
+            guard recoveries.count < maxRecoveriesPerWindow else {
                 return .suppressedByLoopProtection
             }
             recoveries.append((nowMs, .stagedWebDocumentReset))
