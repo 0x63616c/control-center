@@ -17,6 +17,47 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Home Assistant command failed";
 }
 
+type JoinAllActionState =
+  | { kind: "ready"; roomCount: number }
+  | { kind: "pending"; roomCount: number }
+  | { kind: "complete" }
+  | { kind: "unavailable" };
+
+export interface JoinAllActionProps {
+  state: JoinAllActionState;
+  status: string | null;
+  onJoin: () => void;
+}
+
+export function JoinAllAction({ state, status, onJoin }: JoinAllActionProps) {
+  const label =
+    state.kind === "pending"
+      ? `Joining ${state.roomCount} room${state.roomCount === 1 ? "" : "s"}…`
+      : state.kind === "unavailable"
+        ? "Desk unavailable"
+        : state.kind === "complete"
+          ? "All grouped with Desk"
+          : "Join all to Desk";
+  return (
+    <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12 }}>
+      {status && (
+        <div role="status" style={{ color: "var(--ink-2)", fontSize: 13 }}>
+          {status}
+        </div>
+      )}
+      <Button
+        type="button"
+        loading={state.kind === "pending"}
+        disabled={state.kind === "complete" || state.kind === "unavailable"}
+        style={{ width: "auto", minWidth: 180 }}
+        onClick={onJoin}
+      >
+        {label}
+      </Button>
+    </div>
+  );
+}
+
 export function GroupsModal({ rooms, diagnostics }: GroupsModalProps) {
   const utils = trpc.useUtils();
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +86,13 @@ export function GroupsModal({ rooms, diagnostics }: GroupsModalProps) {
     },
     onError: (e) => setError(errorMessage(e)),
   });
+  const joinAllState: JoinAllActionState = !desk
+    ? { kind: "unavailable" }
+    : roomsToJoin.length === 0
+      ? { kind: "complete" }
+      : joinAll.isPending
+        ? { kind: "pending", roomCount: roomsToJoin.length }
+        : { kind: "ready", roomCount: roomsToJoin.length };
   const join = trpc.sound.sonosGroupJoin.useMutation({
     onSuccess: invalidate,
     onError: (e) => setError(errorMessage(e)),
@@ -56,34 +104,17 @@ export function GroupsModal({ rooms, diagnostics }: GroupsModalProps) {
 
   return (
     <div style={{ maxWidth: 960, margin: "0 auto", display: "grid", gap: 24 }}>
-      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12 }}>
-        {status && (
-          <div role="status" style={{ color: "var(--ink-2)", fontSize: 13 }}>
-            {status}
-          </div>
-        )}
-        <Button
-          type="button"
-          loading={joinAll.isPending}
-          disabled={!desk || roomsToJoin.length === 0}
-          style={{ width: "auto", minWidth: 180 }}
-          onClick={() => {
-            if (!desk || roomsToJoin.length === 0) return;
-            joinAll.mutate({
-              coordinatorEntityId: desk.deviceIp,
-              memberEntityIds: roomsToJoin.map((room) => room.deviceIp),
-            });
-          }}
-        >
-          {joinAll.isPending
-            ? `Joining ${roomsToJoin.length} room${roomsToJoin.length === 1 ? "" : "s"}…`
-            : !desk
-              ? "Desk unavailable"
-              : roomsToJoin.length === 0
-                ? "All grouped with Desk"
-                : "Join all to Desk"}
-        </Button>
-      </div>
+      <JoinAllAction
+        state={joinAllState}
+        status={status}
+        onJoin={() => {
+          if (!desk || roomsToJoin.length === 0) return;
+          joinAll.mutate({
+            coordinatorEntityId: desk.deviceIp,
+            memberEntityIds: roomsToJoin.map((room) => room.deviceIp),
+          });
+        }}
+      />
       <section
         style={{
           padding: 16,
