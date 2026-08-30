@@ -53,9 +53,23 @@ export async function sonosGroupJoin(
   { memberIp, coordinatorUuid }: { memberIp: string; coordinatorUuid: string },
   client: HaWriter = ha,
 ): Promise<void> {
+  await sonosGroupJoinAll(
+    { coordinatorEntityId: coordinatorUuid, memberEntityIds: [memberIp] },
+    client,
+  );
+}
+
+// HA accepts every group member in one request, avoiding a serial sequence that can stop halfway.
+export async function sonosGroupJoinAll(
+  {
+    coordinatorEntityId,
+    memberEntityIds,
+  }: { coordinatorEntityId: string; memberEntityIds: readonly string[] },
+  client: HaWriter = ha,
+): Promise<void> {
   await client.callService("media_player", "join", {
-    entity_id: coordinatorUuid,
-    group_members: [memberIp],
+    entity_id: coordinatorEntityId,
+    group_members: memberEntityIds,
   });
 }
 

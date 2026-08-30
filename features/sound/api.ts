@@ -12,6 +12,7 @@ import {
   playMediaOnRoom,
   sonosGrabTvToBeam,
   sonosGroupJoin,
+  sonosGroupJoinAll,
   sonosGroupLeave,
   sonosSetLineIn,
   sonosSetMute,
@@ -108,6 +109,15 @@ export const soundRouter = router({
   sonosGroupJoin: publicProcedure
     .input(z.object({ memberIp: z.string(), coordinatorUuid: z.string().min(1) }))
     .mutation(({ input }) => sonosGroupJoin(input)),
+
+  sonosGroupJoinAll: publicProcedure
+    .input(
+      z.object({
+        coordinatorEntityId: z.string().startsWith("media_player."),
+        memberEntityIds: z.array(z.string().startsWith("media_player.")).min(1),
+      }),
+    )
+    .mutation(({ input }) => sonosGroupJoinAll(input)),
 
   sonosGroupLeave: publicProcedure
     .input(z.object({ memberIp: z.string(), memberUuid: z.string().min(1) }))

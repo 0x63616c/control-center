@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { playMediaOnRoom, sonosGroupJoin, sonosSetVolume } from "./sonos-write-service";
+import {
+  playMediaOnRoom,
+  sonosGroupJoin,
+  sonosGroupJoinAll,
+  sonosSetVolume,
+} from "./sonos-write-service";
 
 describe("HA sound writes", () => {
   it("sends volume, grouping, and Spotify media to Home Assistant", async () => {
@@ -23,6 +28,23 @@ describe("HA sound writes", () => {
       entity_id: "media_player.desk",
       media_content_id: "spotify:playlist:abc",
       media_content_type: "playlist",
+    });
+  });
+
+  it("joins every requested room to one coordinator in a single Home Assistant command", async () => {
+    const callService = vi.fn().mockResolvedValue(undefined);
+
+    await sonosGroupJoinAll(
+      {
+        coordinatorEntityId: "media_player.desk",
+        memberEntityIds: ["media_player.kitchen", "media_player.bathroom"],
+      },
+      { callService },
+    );
+
+    expect(callService).toHaveBeenCalledWith("media_player", "join", {
+      entity_id: "media_player.desk",
+      group_members: ["media_player.kitchen", "media_player.bathroom"],
     });
   });
 });
