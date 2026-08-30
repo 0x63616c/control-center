@@ -5,6 +5,7 @@ import type { RouterOutputs } from "@/lib/trpc";
 import { trpc } from "@/lib/trpc";
 
 type SoundSystemRoom = RouterOutputs["sound"]["soundSystem"]["rooms"][number];
+const JOIN_ALL_TARGET_ROOM_NAME = "Desk";
 
 export interface GroupsModalProps {
   rooms: SoundSystemRoom[];
@@ -61,27 +62,29 @@ export function JoinAllAction({ state, status, onJoin }: JoinAllActionProps) {
 export function GroupsModal({ rooms, diagnostics }: GroupsModalProps) {
   const utils = trpc.useUtils();
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  const [joinAllNotice, setJoinAllNotice] = useState<string | null>(null);
   const [leaderByRoom, setLeaderByRoom] = useState<Record<string, string>>({});
   const invalidate = () => void utils.sound.soundSystem.invalidate();
   const desk = rooms.find(
-    (room) => room.name.trim().toLocaleLowerCase() === "desk" && room.availability === "available",
+    (room) =>
+      room.name.trim().toLocaleLowerCase() === JOIN_ALL_TARGET_ROOM_NAME.toLocaleLowerCase() &&
+      room.availability === "available",
   );
   const roomsToJoin = desk
     ? rooms.filter(
         (room) =>
           room.availability === "available" &&
           room.uuid !== desk.uuid &&
-          room.coordinatorUuid !== desk.uuid,
+          room.coordinatorUuid !== desk.coordinatorUuid,
       )
     : [];
   const joinAll = trpc.sound.sonosGroupJoinAll.useMutation({
     onMutate: () => {
       setError(null);
-      setStatus(null);
+      setJoinAllNotice(null);
     },
     onSuccess: () => {
-      setStatus("Join command sent. Refreshing group status…");
+      setJoinAllNotice("Join command sent. Refreshing group status…");
       invalidate();
     },
     onError: (e) => setError(errorMessage(e)),
@@ -106,11 +109,11 @@ export function GroupsModal({ rooms, diagnostics }: GroupsModalProps) {
     <div style={{ maxWidth: 960, margin: "0 auto", display: "grid", gap: 24 }}>
       <JoinAllAction
         state={joinAllState}
-        status={status}
+        status={joinAllNotice}
         onJoin={() => {
           if (!desk || roomsToJoin.length === 0) return;
           joinAll.mutate({
-            coordinatorEntityId: desk.deviceIp,
+            coordinatorEntityId: desk.coordinatorUuid,
             memberEntityIds: roomsToJoin.map((room) => room.deviceIp),
           });
         }}

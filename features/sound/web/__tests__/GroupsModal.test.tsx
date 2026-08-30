@@ -139,6 +139,28 @@ describe("GroupsModal join-all workflow", () => {
     expect(screen.getByRole("button", { name: "All grouped with Desk" })).toBeDisabled();
   });
 
+  it("uses Desk's current group when Desk is following another coordinator", () => {
+    const livingRoomId = "media_player.living_room";
+    render(
+      <GroupsModal
+        diagnostics={diagnostics}
+        rooms={[
+          room("Living Room", livingRoomId),
+          room("Desk", "media_player.desk", livingRoomId),
+          room("Bedroom", "media_player.bedroom", livingRoomId),
+          room("Kitchen", "media_player.kitchen"),
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Join all to Desk" }));
+
+    expect(mocks.joinAll).toHaveBeenCalledWith({
+      coordinatorEntityId: livingRoomId,
+      memberEntityIds: ["media_player.kitchen"],
+    });
+  });
+
   it("announces success and refreshes the live group snapshot", () => {
     render(
       <GroupsModal
