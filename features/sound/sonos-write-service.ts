@@ -59,6 +59,20 @@ export async function sonosGroupJoin(
   });
 }
 
+/** Join multiple rooms to one HA media-player leader in a single command. */
+export async function sonosGroupJoinAll(
+  {
+    coordinatorEntityId,
+    memberEntityIds,
+  }: { coordinatorEntityId: string; memberEntityIds: readonly string[] },
+  client: HaWriter = ha,
+): Promise<void> {
+  await client.callService("media_player", "join", {
+    entity_id: coordinatorEntityId,
+    group_members: memberEntityIds,
+  });
+}
+
 /** Make a room standalone through HA. */
 export async function sonosGroupLeave(
   { memberIp }: { memberIp: string; memberUuid: string },
