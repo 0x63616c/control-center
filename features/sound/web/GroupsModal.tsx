@@ -20,8 +20,31 @@ function errorMessage(error: unknown): string {
 export function GroupsModal({ rooms, diagnostics }: GroupsModalProps) {
   const utils = trpc.useUtils();
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
   const [leaderByRoom, setLeaderByRoom] = useState<Record<string, string>>({});
   const invalidate = () => void utils.sound.soundSystem.invalidate();
+  const desk = rooms.find(
+    (room) => room.name.trim().toLocaleLowerCase() === "desk" && room.availability === "available",
+  );
+  const roomsToJoin = desk
+    ? rooms.filter(
+        (room) =>
+          room.availability === "available" &&
+          room.uuid !== desk.uuid &&
+          room.coordinatorUuid !== desk.uuid,
+      )
+    : [];
+  const joinAll = trpc.sound.sonosGroupJoinAll.useMutation({
+    onMutate: () => {
+      setError(null);
+      setStatus(null);
+    },
+    onSuccess: () => {
+      setStatus("Join command sent. Refreshing group status…");
+      invalidate();
+    },
+    onError: (e) => setError(errorMessage(e)),
+  });
   const join = trpc.sound.sonosGroupJoin.useMutation({
     onSuccess: invalidate,
     onError: (e) => setError(errorMessage(e)),
@@ -33,6 +56,34 @@ export function GroupsModal({ rooms, diagnostics }: GroupsModalProps) {
 
   return (
     <div style={{ maxWidth: 960, margin: "0 auto", display: "grid", gap: 24 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 12 }}>
+        {status && (
+          <div role="status" style={{ color: "var(--ink-2)", fontSize: 13 }}>
+            {status}
+          </div>
+        )}
+        <Button
+          type="button"
+          loading={joinAll.isPending}
+          disabled={!desk || roomsToJoin.length === 0}
+          style={{ width: "auto", minWidth: 180 }}
+          onClick={() => {
+            if (!desk || roomsToJoin.length === 0) return;
+            joinAll.mutate({
+              coordinatorEntityId: desk.deviceIp,
+              memberEntityIds: roomsToJoin.map((room) => room.deviceIp),
+            });
+          }}
+        >
+          {joinAll.isPending
+            ? `Joining ${roomsToJoin.length} room${roomsToJoin.length === 1 ? "" : "s"}…`
+            : !desk
+              ? "Desk unavailable"
+              : roomsToJoin.length === 0
+                ? "All grouped with Desk"
+                : "Join all to Desk"}
+        </Button>
+      </div>
       <section
         style={{
           padding: 16,
