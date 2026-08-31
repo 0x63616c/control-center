@@ -24,6 +24,7 @@
 		7A1E7FAC0008BDE64C0FA106 /* KioskDiagnosticsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E7FAC0007BDE64C0FA106 /* KioskDiagnosticsPlugin.swift */; };
 		7A1E7FAC0010BDE64C0FA106 /* PanelDiagnosticsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E7FAC000FBDE64C0FA106 /* PanelDiagnosticsModels.swift */; };
 		7A1E7FAC0012BDE64C0FA106 /* PanelMetricKitCollector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E7FAC0011BDE64C0FA106 /* PanelMetricKitCollector.swift */; };
+		7A1E7FAC0014BDE64C0FA106 /* PanelMaintenancePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1E7FAC0013BDE64C0FA106 /* PanelMaintenancePlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -46,6 +47,7 @@
 		7A1E7FAC0007BDE64C0FA106 /* KioskDiagnosticsPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KioskDiagnosticsPlugin.swift; sourceTree = "<group>"; };
 		7A1E7FAC000FBDE64C0FA106 /* PanelDiagnosticsModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PanelDiagnosticsModels.swift; sourceTree = "<group>"; };
 		7A1E7FAC0011BDE64C0FA106 /* PanelMetricKitCollector.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PanelMetricKitCollector.swift; sourceTree = "<group>"; };
+		7A1E7FAC0013BDE64C0FA106 /* PanelMaintenancePlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PanelMaintenancePlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -97,6 +99,7 @@
 				7A1E7FAC0007BDE64C0FA106 /* KioskDiagnosticsPlugin.swift */,
 				7A1E7FAC000FBDE64C0FA106 /* PanelDiagnosticsModels.swift */,
 				7A1E7FAC0011BDE64C0FA106 /* PanelMetricKitCollector.swift */,
+				7A1E7FAC0013BDE64C0FA106 /* PanelMaintenancePlugin.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -192,6 +195,7 @@
 				7A1E7FAC0008BDE64C0FA106 /* KioskDiagnosticsPlugin.swift in Sources */,
 				7A1E7FAC0010BDE64C0FA106 /* PanelDiagnosticsModels.swift in Sources */,
 				7A1E7FAC0012BDE64C0FA106 /* PanelMetricKitCollector.swift in Sources */,
+				7A1E7FAC0014BDE64C0FA106 /* PanelMaintenancePlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

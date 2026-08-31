@@ -3,7 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink } from "@trpc/client";
 import { getQueryKey } from "@trpc/react-query";
 import { useState } from "react";
-import { expect, fn, within } from "storybook/test";
+import { expect, fireEvent, fn, within } from "storybook/test";
+import type { PanelMaintenanceClient } from "../../../lib/panel-maintenance";
 import { trpc } from "../../../lib/trpc";
 import type { PageProps } from "../SettingsPage";
 import { BoardPage } from "./BoardPage";
@@ -142,10 +143,25 @@ export const Board: Story = {
 };
 
 export const Time: Story = {
-  render: () => <TimePage {...pageProps} />,
+  render: () => {
+    const maintenance: PanelMaintenanceClient = {
+      isAvailable: () => true,
+      get: fn(async () => ({ enabled: true, time: "03:00", nextRunAtMs: 1_788_260_400_000 })),
+      set: fn(async (update) => ({ ...update, nextRunAtMs: 1_788_264_000_000 })),
+      runNow: fn(async () => true),
+    };
+    return <TimePage {...pageProps} maintenance={maintenance} />;
+  },
   play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByRole("combobox", { name: "Time zone" })).toBeInTheDocument();
     await expect(
-      within(canvasElement).getByRole("combobox", { name: "Time zone" }),
-    ).toBeInTheDocument();
+      await canvas.findByRole("switch", { name: "Nightly WebKit refresh" }),
+    ).toBeChecked();
+    const time = canvas.getByLabelText("Maintenance time");
+    await expect(time).toHaveValue("03:00");
+    fireEvent.change(time, { target: { value: "04:30" } });
+    await canvas.findByDisplayValue("04:30");
+    await expect(canvas.getByRole("button", { name: "Run now" })).toBeInTheDocument();
   },
 };

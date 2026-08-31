@@ -8,7 +8,8 @@ import WebKit
 // framework's recovery behavior remains intact.
 private final class KioskNavigationDelegateProxy: NSObject, WKNavigationDelegate {
     weak var downstream: WKNavigationDelegate?
-    var onNextNavigationFinished: (() -> Void)?
+    private var awaitedNavigation: WKNavigation?
+    private var onAwaitedNavigationFinished: (() -> Void)?
 
     init(downstream: WKNavigationDelegate?) {
         self.downstream = downstream
@@ -21,9 +22,21 @@ private final class KioskNavigationDelegateProxy: NSObject, WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         downstream?.webView?(webView, didFinish: navigation)
-        let completion = onNextNavigationFinished
-        onNextNavigationFinished = nil
+        guard navigation === awaitedNavigation else { return }
+        let completion = onAwaitedNavigationFinished
+        awaitedNavigation = nil
+        onAwaitedNavigationFinished = nil
         completion?()
+    }
+
+    func whenFinished(_ navigation: WKNavigation?, perform completion: @escaping () -> Void) {
+        awaitedNavigation = navigation
+        onAwaitedNavigationFinished = completion
+    }
+
+    func clearAwaitedNavigation() {
+        awaitedNavigation = nil
+        onAwaitedNavigationFinished = nil
     }
 
     override func responds(to selector: Selector!) -> Bool {
@@ -42,8 +55,12 @@ class KioskViewController: CAPBridgeViewController {
     private var watchdog: KioskWatchdog?
     private var navigationDelegateProxy: KioskNavigationDelegateProxy?
     private var observesMemoryPressure = false
+    private var observesMaintenanceRequests = false
     private var nightlyMaintenanceTimer: Timer?
     private var stagedResetFallbackTimer: Timer?
+    private var maintenanceCoverFallbackTimer: Timer?
+    private var maintenanceCoverView: UIView?
+    private let maintenanceConfigurationStore = PanelMaintenanceConfigurationStore()
     private var memoryPressurePolicy = PanelMemoryPressureRecoveryPolicy(
         windowMs: 60 * 60 * 1_000
     )
@@ -72,12 +89,14 @@ class KioskViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(UISoundPlugin())
         bridge?.registerPluginInstance(PanelVolumePlugin())
         bridge?.registerPluginInstance(KioskDiagnosticsPlugin())
+        bridge?.registerPluginInstance(PanelMaintenancePlugin())
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         installNavigationDelegateProxyIfNeeded()
         observeMemoryPressureIfNeeded()
+        observeMaintenanceRequestsIfNeeded()
         injectAccessHeadersIfNeeded()
         startWatchdogIfNeeded()
         scheduleNightlyMaintenanceIfNeeded()
@@ -86,6 +105,7 @@ class KioskViewController: CAPBridgeViewController {
     deinit {
         nightlyMaintenanceTimer?.invalidate()
         stagedResetFallbackTimer?.invalidate()
+        maintenanceCoverFallbackTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -112,14 +132,17 @@ class KioskViewController: CAPBridgeViewController {
         loadAuthenticatedOrigin()
     }
 
-    private func loadAuthenticatedOrigin() {
+    private func loadAuthenticatedOrigin(onFinished: (() -> Void)? = nil) {
         guard let webView = webView else { return }
         guard let origin = bridge?.config.appStartServerURL ?? webView.url else { return }
         var request = URLRequest(url: origin)
         for (name, value) in kioskAccess?.headers ?? [:] {
             request.setValue(value, forHTTPHeaderField: name)
         }
-        webView.load(request)
+        let navigation = webView.load(request)
+        if let onFinished {
+            navigationDelegateProxy?.whenFinished(navigation, perform: onFinished)
+        }
     }
 
     private func installNavigationDelegateProxyIfNeeded() {
@@ -140,6 +163,23 @@ class KioskViewController: CAPBridgeViewController {
         observesMemoryPressure = true
     }
 
+    private func observeMaintenanceRequestsIfNeeded() {
+        guard !observesMaintenanceRequests else { return }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(rescheduleNightlyMaintenance),
+            name: .panelMaintenanceConfigurationChanged,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(performManualMaintenance),
+            name: .panelMaintenanceRunRequested,
+            object: nil
+        )
+        observesMaintenanceRequests = true
+    }
+
     @objc private func recoverFromMemoryPressure() {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
         executeRecovery(
@@ -150,7 +190,13 @@ class KioskViewController: CAPBridgeViewController {
 
     private func scheduleNightlyMaintenanceIfNeeded() {
         guard nightlyMaintenanceTimer == nil else { return }
-        let schedule = PanelNightlyMaintenanceSchedule(hour: 3, calendar: .current)
+        let configuration = maintenanceConfigurationStore.configuration
+        guard configuration.enabled else { return }
+        let schedule = PanelNightlyMaintenanceSchedule(
+            hour: configuration.hour,
+            minute: configuration.minute,
+            calendar: .current
+        )
         guard let nextDate = schedule.nextDate(after: Date()) else { return }
         let timer = Timer(fire: nextDate, interval: 0, repeats: false) { [weak self] _ in
             guard let self else { return }
@@ -170,6 +216,20 @@ class KioskViewController: CAPBridgeViewController {
         )
     }
 
+    @objc private func rescheduleNightlyMaintenance() {
+        nightlyMaintenanceTimer?.invalidate()
+        nightlyMaintenanceTimer = nil
+        scheduleNightlyMaintenanceIfNeeded()
+    }
+
+    @objc private func performManualMaintenance() {
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        executeRecovery(
+            memoryPressurePolicy.scheduledMaintenanceAction(atMs: nowMs),
+            trigger: .manualMaintenance
+        )
+    }
+
     private func executeRecovery(
         _ action: PanelMemoryPressureRecoveryAction,
         trigger: PanelRecoveryTrigger
@@ -182,8 +242,10 @@ class KioskViewController: CAPBridgeViewController {
         )
         switch action {
         case .authenticatedOriginReload:
-            loadAuthenticatedOrigin()
+            showMaintenanceCover()
+            loadAuthenticatedOrigin { [weak self] in self?.dismissMaintenanceCover() }
         case .stagedWebDocumentReset:
+            showMaintenanceCover()
             stageAuthenticatedOriginReset()
         case .suppressedByLoopProtection:
             break
@@ -192,7 +254,7 @@ class KioskViewController: CAPBridgeViewController {
 
     private func stageAuthenticatedOriginReset() {
         guard let webView, let navigationDelegateProxy else {
-            loadAuthenticatedOrigin()
+            loadAuthenticatedOrigin { [weak self] in self?.dismissMaintenanceCover() }
             return
         }
         stagedResetFallbackTimer?.invalidate()
@@ -205,14 +267,64 @@ class KioskViewController: CAPBridgeViewController {
             guard let self, let webView, self.webView === webView else { return }
             self.stagedResetFallbackTimer?.invalidate()
             self.stagedResetFallbackTimer = nil
-            navigationDelegateProxy?.onNextNavigationFinished = nil
-            self.loadAuthenticatedOrigin()
+            navigationDelegateProxy?.clearAwaitedNavigation()
+            self.loadAuthenticatedOrigin { [weak self] in self?.dismissMaintenanceCover() }
         }
-        navigationDelegateProxy.onNextNavigationFinished = finishReset
         let fallback = Timer(timeInterval: 10, repeats: false) { _ in finishReset() }
         RunLoop.main.add(fallback, forMode: .common)
         stagedResetFallbackTimer = fallback
-        webView.loadHTMLString("<!doctype html><title>Recovering</title>", baseURL: nil)
+        let navigation = webView.loadHTMLString(
+            "<!doctype html><meta name=\"color-scheme\" content=\"dark\"><style>html{background:#101419}</style><title>Refreshing</title>",
+            baseURL: nil
+        )
+        navigationDelegateProxy.whenFinished(navigation, perform: finishReset)
+    }
+
+    private func showMaintenanceCover() {
+        maintenanceCoverFallbackTimer?.invalidate()
+        if maintenanceCoverView == nil {
+            let cover = UIView(frame: view.bounds)
+            cover.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            cover.backgroundColor = UIColor(red: 0.063, green: 0.078, blue: 0.098, alpha: 1)
+
+            let spinner = UIActivityIndicatorView(style: .medium)
+            spinner.color = UIColor(white: 0.72, alpha: 1)
+            spinner.startAnimating()
+            let label = UILabel()
+            label.text = "Refreshing Control Center…"
+            label.textColor = UIColor(white: 0.82, alpha: 1)
+            label.font = UIFont.systemFont(ofSize: 17, weight: .medium)
+            let stack = UIStackView(arrangedSubviews: [spinner, label])
+            stack.axis = .vertical
+            stack.alignment = .center
+            stack.spacing = 16
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            cover.addSubview(stack)
+            NSLayoutConstraint.activate([
+                stack.centerXAnchor.constraint(equalTo: cover.centerXAnchor),
+                stack.centerYAnchor.constraint(equalTo: cover.centerYAnchor),
+            ])
+            view.addSubview(cover)
+            maintenanceCoverView = cover
+        }
+
+        let fallback = Timer(timeInterval: 20, repeats: false) { [weak self] _ in
+            self?.dismissMaintenanceCover()
+        }
+        RunLoop.main.add(fallback, forMode: .common)
+        maintenanceCoverFallbackTimer = fallback
+    }
+
+    private func dismissMaintenanceCover() {
+        maintenanceCoverFallbackTimer?.invalidate()
+        maintenanceCoverFallbackTimer = nil
+        guard let cover = maintenanceCoverView else { return }
+        maintenanceCoverView = nil
+        UIView.animate(withDuration: 0.35, animations: {
+            cover.alpha = 0
+        }, completion: { _ in
+            cover.removeFromSuperview()
+        })
     }
 
     // The kiosk is unattended, so it must recover on its own from a Cloudflare

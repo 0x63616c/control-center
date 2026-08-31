@@ -609,11 +609,16 @@ external debugger can attach to:
   performs a staged inert-document WebKit reset before returning to the
   authenticated origin. Further warnings are suppressed until that staged
   reset ages out of the rolling hour, preventing a recovery loop. Independently,
-  the Panel performs that staged reset every day at 03:00 local time, before the
-  observed 28-31 hour pressure window. Scheduled and warning-driven resets share
-  loop protection, retain cookies/cache/authentication, and use a ten-second
-  authenticated-navigation fallback if the inert document never finishes. This
-  is local recovery, **not** missing-heartbeat alerting
+  the Panel performs that staged reset every day at 03:00 local time by default,
+  before the observed 28-31 hour pressure window. Settings > Time exposes the
+  enabled state, device-local time, next run, and a manual test action; changes
+  persist in native preferences and reschedule immediately. Scheduled, manual,
+  and warning-driven resets share loop protection, retain
+  cookies/cache/authentication, and use a ten-second authenticated-navigation
+  fallback if the inert document never finishes. A native dark refresh cover
+  stays above WebKit until the authenticated origin finishes, then fades; a
+  separate twenty-second visual fallback prevents that cover from sticking.
+  This is local recovery, **not** missing-heartbeat alerting
 - MetricKit app-exit, peak-memory, crash, hang, CPU and termination evidence is
   retained independently across launches (newest four payloads, at most 64 KiB
   each). A bounded raw prefix remains in the native archive, while a structured

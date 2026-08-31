@@ -188,14 +188,78 @@ struct PanelMemoryPressureRecoveryPolicy {
 
 struct PanelNightlyMaintenanceSchedule {
     let hour: Int
+    let minute: Int
     let calendar: Calendar
 
     func nextDate(after date: Date) -> Date? {
         calendar.nextDate(
             after: date,
-            matching: DateComponents(hour: hour),
+            matching: DateComponents(hour: hour, minute: minute),
             matchingPolicy: .nextTime,
             direction: .forward
         )
+    }
+}
+
+struct PanelMaintenanceConfiguration: Equatable {
+    let enabled: Bool
+    let hour: Int
+    let minute: Int
+
+    var isValid: Bool {
+        (0...23).contains(hour) && (0...59).contains(minute)
+    }
+
+    var time: String {
+        String(format: "%02d:%02d", hour, minute)
+    }
+
+    init(enabled: Bool, hour: Int, minute: Int) {
+        self.enabled = enabled
+        self.hour = hour
+        self.minute = minute
+    }
+
+    init?(enabled: Bool, time: String) {
+        let parts = time.split(separator: ":", omittingEmptySubsequences: false)
+        guard
+            parts.count == 2,
+            let hour = Int(parts[0]),
+            let minute = Int(parts[1])
+        else { return nil }
+        let candidate = PanelMaintenanceConfiguration(enabled: enabled, hour: hour, minute: minute)
+        guard candidate.isValid, candidate.time == time else { return nil }
+        self = candidate
+    }
+}
+
+final class PanelMaintenanceConfigurationStore {
+    private enum Key {
+        static let enabled = "panel-maintenance.enabled"
+        static let hour = "panel-maintenance.hour"
+        static let minute = "panel-maintenance.minute"
+    }
+
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    var configuration: PanelMaintenanceConfiguration {
+        let enabled = defaults.object(forKey: Key.enabled) as? Bool ?? true
+        let hour = defaults.object(forKey: Key.hour) as? Int ?? 3
+        let minute = defaults.object(forKey: Key.minute) as? Int ?? 0
+        let stored = PanelMaintenanceConfiguration(enabled: enabled, hour: hour, minute: minute)
+        return stored.isValid ? stored : PanelMaintenanceConfiguration(enabled: true, hour: 3, minute: 0)
+    }
+
+    @discardableResult
+    func save(_ configuration: PanelMaintenanceConfiguration) -> Bool {
+        guard configuration.isValid else { return false }
+        defaults.set(configuration.enabled, forKey: Key.enabled)
+        defaults.set(configuration.hour, forKey: Key.hour)
+        defaults.set(configuration.minute, forKey: Key.minute)
+        return true
     }
 }
