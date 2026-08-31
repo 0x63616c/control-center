@@ -47,7 +47,7 @@ const webContentTerminationEventSchema = z.object({
 });
 const recoveryEventSchema = z.object({
   timestampMs: timestampSchema,
-  trigger: z.literal("memory-warning"),
+  trigger: z.enum(["memory-warning", "scheduled-maintenance"]),
   outcome: z.enum([
     "authenticated-origin-reload",
     "staged-web-document-reset",
@@ -162,10 +162,10 @@ function recordRunEvents(run: NativeRunRecord, runOrigin: "current" | "previous"
     });
   }
   for (const event of run.recoveryEvents) {
-    const id = `${run.runId}:recovery:${event.timestampMs}:${event.outcome}`;
+    const id = `${run.runId}:recovery:${event.timestampMs}:${event.trigger}:${event.outcome}`;
     if (nativeEventIdsLogged.has(id)) continue;
     nativeEventIdsLogged.add(id);
-    diagnosticsLog.info("memory pressure recovery", { runId: run.runId, runOrigin, ...event });
+    diagnosticsLog.info("panel recovery", { runId: run.runId, runOrigin, ...event });
   }
 }
 

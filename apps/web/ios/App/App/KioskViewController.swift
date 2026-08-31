@@ -42,6 +42,8 @@ class KioskViewController: CAPBridgeViewController {
     private var watchdog: KioskWatchdog?
     private var navigationDelegateProxy: KioskNavigationDelegateProxy?
     private var observesMemoryPressure = false
+    private var nightlyMaintenanceTimer: Timer?
+    private var stagedResetFallbackTimer: Timer?
     private var memoryPressurePolicy = PanelMemoryPressureRecoveryPolicy(
         windowMs: 60 * 60 * 1_000
     )
@@ -78,9 +80,12 @@ class KioskViewController: CAPBridgeViewController {
         observeMemoryPressureIfNeeded()
         injectAccessHeadersIfNeeded()
         startWatchdogIfNeeded()
+        scheduleNightlyMaintenanceIfNeeded()
     }
 
     deinit {
+        nightlyMaintenanceTimer?.invalidate()
+        stagedResetFallbackTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -158,20 +163,62 @@ class KioskViewController: CAPBridgeViewController {
         }
     }
 
+    private func scheduleNightlyMaintenanceIfNeeded() {
+        guard nightlyMaintenanceTimer == nil else { return }
+        let schedule = PanelNightlyMaintenanceSchedule(hour: 3, calendar: .current)
+        guard let nextDate = schedule.nextDate(after: Date()) else { return }
+        let timer = Timer(fire: nextDate, interval: 0, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            self.nightlyMaintenanceTimer = nil
+            self.performNightlyMaintenance()
+            self.scheduleNightlyMaintenanceIfNeeded()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        nightlyMaintenanceTimer = timer
+    }
+
+    private func performNightlyMaintenance() {
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
+        let action = memoryPressurePolicy.scheduledMaintenanceAction(atMs: nowMs)
+        let outcome: PanelRecoveryOutcome
+        switch action {
+        case .authenticatedOriginReload:
+            outcome = .authenticatedOriginReload
+            loadAuthenticatedOrigin()
+        case .stagedWebDocumentReset:
+            outcome = .stagedWebDocumentReset
+            stageAuthenticatedOriginReset()
+        case .suppressedByLoopProtection:
+            outcome = .suppressedByLoopProtection
+        }
+        KioskDiagnosticsRecorder.shared.recordRecovery(
+            trigger: .scheduledMaintenance,
+            outcome: outcome
+        )
+    }
+
     private func stageAuthenticatedOriginReset() {
         guard let webView, let navigationDelegateProxy else {
             loadAuthenticatedOrigin()
             return
         }
+        stagedResetFallbackTimer?.invalidate()
         webView.stopLoading()
         // A same-origin navigation replaces the document but lets WebKit retain
         // its old graph while the new response is fetched. Commit a tiny inert
         // document first so repeated pressure gets one stronger, public-API-only
         // teardown without clearing cookies, website data, or feature state.
-        navigationDelegateProxy.onNextNavigationFinished = { [weak self, weak webView] in
+        let finishReset = { [weak self, weak webView, weak navigationDelegateProxy] in
             guard let self, let webView, self.webView === webView else { return }
+            self.stagedResetFallbackTimer?.invalidate()
+            self.stagedResetFallbackTimer = nil
+            navigationDelegateProxy?.onNextNavigationFinished = nil
             self.loadAuthenticatedOrigin()
         }
+        navigationDelegateProxy.onNextNavigationFinished = finishReset
+        let fallback = Timer(timeInterval: 10, repeats: false) { _ in finishReset() }
+        RunLoop.main.add(fallback, forMode: .common)
+        stagedResetFallbackTimer = fallback
         webView.loadHTMLString("<!doctype html><title>Recovering</title>", baseURL: nil)
     }
 

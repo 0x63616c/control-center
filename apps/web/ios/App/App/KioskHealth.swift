@@ -148,8 +148,7 @@ struct PanelMemoryPressureRecoveryPolicy {
     }
 
     mutating func action(atMs nowMs: Int64) -> PanelMemoryPressureRecoveryAction {
-        let windowStart = nowMs - windowMs
-        recoveries.removeAll { $0.timestampMs < windowStart }
+        discardRecoveriesOutsideWindow(atMs: nowMs)
 
         if recoveries.contains(where: { $0.action == .stagedWebDocumentReset }) {
             return .suppressedByLoopProtection
@@ -162,5 +161,33 @@ struct PanelMemoryPressureRecoveryPolicy {
 
         recoveries.append((nowMs, .authenticatedOriginReload))
         return .authenticatedOriginReload
+    }
+
+    mutating func scheduledMaintenanceAction(atMs nowMs: Int64) -> PanelMemoryPressureRecoveryAction {
+        discardRecoveriesOutsideWindow(atMs: nowMs)
+        if recoveries.contains(where: { $0.action == .stagedWebDocumentReset }) {
+            return .suppressedByLoopProtection
+        }
+        recoveries.append((nowMs, .stagedWebDocumentReset))
+        return .stagedWebDocumentReset
+    }
+
+    private mutating func discardRecoveriesOutsideWindow(atMs nowMs: Int64) {
+        let windowStart = nowMs - windowMs
+        recoveries.removeAll { $0.timestampMs < windowStart }
+    }
+}
+
+struct PanelNightlyMaintenanceSchedule {
+    let hour: Int
+    let calendar: Calendar
+
+    func nextDate(after date: Date) -> Date? {
+        calendar.nextDate(
+            after: date,
+            matching: DateComponents(hour: hour),
+            matchingPolicy: .nextTime,
+            direction: .forward
+        )
     }
 }

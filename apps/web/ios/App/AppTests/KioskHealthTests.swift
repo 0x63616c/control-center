@@ -162,6 +162,64 @@ enum KioskHealthTests {
             "a second warning 56m55s later escalates inside the rolling hour"
         )
 
+        // --- Nightly 03:00 WebKit maintenance (T-58) ---
+        // Calendar scheduling is intentionally local-time based: the Panel gets
+        // one fresh document every night before its observed 28-31h danger
+        // window, including across daylight-saving clock changes.
+        var losAngeles = Calendar(identifier: .gregorian)
+        losAngeles.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        let nightly = PanelNightlyMaintenanceSchedule(hour: 3, calendar: losAngeles)
+        let beforeThree = losAngeles.date(
+            from: DateComponents(year: 2026, month: 8, day: 31, hour: 2, minute: 30)
+        )!
+        let sameDayThree = losAngeles.date(
+            from: DateComponents(year: 2026, month: 8, day: 31, hour: 3)
+        )!
+        Check.expect(
+            nightly.nextDate(after: beforeThree) == sameDayThree,
+            "before 03:00, nightly maintenance targets the same day's 03:00"
+        )
+
+        let afterThree = losAngeles.date(
+            from: DateComponents(year: 2026, month: 8, day: 31, hour: 3, minute: 1)
+        )!
+        let nextDayThree = losAngeles.date(
+            from: DateComponents(year: 2026, month: 9, day: 1, hour: 3)
+        )!
+        Check.expect(
+            nightly.nextDate(after: afterThree) == nextDayThree,
+            "after 03:00, nightly maintenance rolls to the next day's 03:00"
+        )
+
+        let beforeDSTEnd = losAngeles.date(
+            from: DateComponents(year: 2026, month: 10, day: 31, hour: 3, minute: 1)
+        )!
+        let afterDSTEnd = losAngeles.date(
+            from: DateComponents(year: 2026, month: 11, day: 1, hour: 3)
+        )!
+        Check.expect(
+            nightly.nextDate(after: beforeDSTEnd) == afterDSTEnd,
+            "nightly maintenance remains local 03:00 across daylight-saving changes"
+        )
+
+        var scheduledPressure = PanelMemoryPressureRecoveryPolicy(
+            windowMs: 60 * 60 * 1_000
+        )
+        let firstNightlyReset = Int64(24 * 60 * 60 * 1_000)
+        Check.expect(
+            scheduledPressure.scheduledMaintenanceAction(atMs: firstNightlyReset) == .stagedWebDocumentReset,
+            "nightly maintenance performs the staged document reset"
+        )
+        Check.expect(
+            scheduledPressure.action(atMs: firstNightlyReset + 5 * 60 * 1_000) == .suppressedByLoopProtection,
+            "a warning shortly after nightly maintenance is suppressed by the shared loop guard"
+        )
+        Check.expect(
+            scheduledPressure.scheduledMaintenanceAction(atMs: firstNightlyReset + 24 * 60 * 60 * 1_000)
+                == .stagedWebDocumentReset,
+            "the next night's maintenance runs after the prior reset leaves the rolling hour"
+        )
+
         // --- Durable diagnostics compatibility + bounds (T-51) ---
         // Build 104 must decode the smaller Build 103 record already persisted
         // on the wall iPad; otherwise the first launch after updating destroys
