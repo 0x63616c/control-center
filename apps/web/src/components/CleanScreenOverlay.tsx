@@ -22,10 +22,11 @@ const TICK_MS = 250;
 
 export interface CleanScreenOverlayProps {
   open: boolean;
-  onClose: () => void;
+  onComplete: () => void;
+  onCancel: () => void;
 }
 
-export function CleanScreenOverlay({ open, onClose }: CleanScreenOverlayProps) {
+export function CleanScreenOverlay({ open, onComplete, onCancel }: CleanScreenOverlayProps) {
   const [now, setNow] = useState(() => Date.now());
   const [startedAt, setStartedAt] = useState(() => Date.now());
   const [holdStartedAt, setHoldStartedAt] = useState<number | null>(null);
@@ -56,15 +57,18 @@ export function CleanScreenOverlay({ open, onClose }: CleanScreenOverlayProps) {
   const holdProgress =
     holdStartedAt == null ? 0 : Math.min(1, (now - holdStartedAt) / HOLD_TO_EXIT_MS);
 
-  // Exit on hold completion or failsafe expiry. Guarded so a tick landing
-  // after the closing render can't fire onClose twice.
+  // A deliberate hold is the only successful completion. The failsafe is a
+  // cancellation, so callers cannot mistake automatic recovery for success.
   useEffect(() => {
     if (!open || closed.current) return;
-    if (holdProgress >= 1 || remainingMs <= 0) {
+    if (holdProgress >= 1) {
       closed.current = true;
-      onClose();
+      onComplete();
+    } else if (remainingMs <= 0) {
+      closed.current = true;
+      onCancel();
     }
-  }, [open, holdProgress, remainingMs, onClose]);
+  }, [open, holdProgress, remainingMs, onComplete, onCancel]);
 
   if (!open) return null;
 

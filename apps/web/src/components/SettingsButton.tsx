@@ -16,6 +16,7 @@ import { useEffect, useState } from "react";
 import { panelSession } from "../lib/panel-session";
 import { closeSettings, openSettings, useSettingsOverlay } from "../lib/settings-overlay-store";
 import { CleanScreenOverlay } from "./CleanScreenOverlay";
+import { ConfettiCelebration } from "./ConfettiCelebration";
 import { Icon } from "./Icon";
 import { LevelOverlay } from "./LevelOverlay";
 import { PinGateModal } from "./pin/PinGateModal";
@@ -31,6 +32,7 @@ export function SettingsButton() {
   // SettingsPage: they close the page behind them, and re-open it on exit.
   const [levelOpen, setLevelOpen] = useState(false);
   const [cleanOpen, setCleanOpen] = useState(false);
+  const [celebrating, setCelebrating] = useState(false);
 
   // Session end must drop the overlay TARGET too, not just the mounted page.
   // While a sub-overlay (level/clean) is up the SettingsPage is unmounted, so
@@ -43,6 +45,7 @@ export function SettingsButton() {
         closeSettings();
         setLevelOpen(false);
         setCleanOpen(false);
+        setCelebrating(false);
       }),
     [],
   );
@@ -95,7 +98,15 @@ export function SettingsButton() {
         onOpenClean={() => setCleanOpen(true)}
       />
       <LevelOverlay open={levelOpen} onClose={() => setLevelOpen(false)} />
-      <CleanScreenOverlay open={cleanOpen} onClose={() => setCleanOpen(false)} />
+      <CleanScreenOverlay
+        open={cleanOpen}
+        onComplete={() => {
+          setCleanOpen(false);
+          setCelebrating(true);
+        }}
+        onCancel={() => setCleanOpen(false)}
+      />
+      {celebrating ? <ConfettiCelebration onFinished={() => setCelebrating(false)} /> : null}
     </>
   );
 }

@@ -33,5 +33,7 @@ export const Z_LAYER = {
    *  screen-cleaning lockout, and the board's own gesture layer above them. */
   levelOverlay: 200,
   cleanScreenOverlay: 300,
+  /** Decorative and pointer-transparent; paints over the reopened Settings page. */
+  celebrationOverlay: 350,
   boardGestureLayer: 400,
 } as const;

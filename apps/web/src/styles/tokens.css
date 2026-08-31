@@ -639,6 +639,44 @@
 .modal-no-enter .modal-panel {
   animation: none;
 }
+@keyframes confettiFall {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -12vh, 0) rotate(0deg);
+  }
+  12%,
+  88% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--confetti-drift), 112vh, 0) rotate(var(--confetti-rotation));
+  }
+}
+.confetti-celebration {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.confetti-piece {
+  position: absolute;
+  top: -20px;
+  width: 9px;
+  height: 15px;
+  border-radius: 2px;
+  opacity: 0;
+  animation: confettiFall var(--confetti-duration) cubic-bezier(0.22, 0.7, 0.35, 1)
+    var(--confetti-delay) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .confetti-celebration {
+    display: none;
+  }
+  .confetti-piece {
+    animation: none;
+  }
+}
 .divider {
   height: 1px;
   background: var(--hair);
