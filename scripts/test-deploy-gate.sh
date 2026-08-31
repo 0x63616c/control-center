@@ -17,6 +17,13 @@
 set -euo pipefail
 f=.github/workflows/ci.yml
 
+# A missing registry tag must not erase otherwise valid immutable production
+# pins. The deploy updates resolved entries in place and retains all others.
+if grep -Eq 'pulumi config rm[[:space:]]+wwwinfra:imageDigests' "$f"; then
+  echo "FAIL: deploy-home-server must preserve existing image digest pins"
+  exit 1
+fi
+
 # name<TAB>path, one line per path, for every entry in the `filters:` block.
 filters() {
   awk '

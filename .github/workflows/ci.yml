@@ -814,15 +814,16 @@ jobs:
           fi
           echo "Deploying stack $STACK with kube context: $ctx"
           pulumi config set wwwinfra:kubeContext "$ctx" --stack "$STACK"
-          # Pin each changed app image by digest: a changed digest rolls only that
-          # workload (www-czg). Clear the prior map first so a no-longer-built image
-          # can't keep a phantom pin, then set each service's digest path.
+          # Pin each resolved app image by digest: a changed digest rolls only that
+          # workload (www-czg). Preserve existing pins for images that were not
+          # rebuilt or whose registry tag is temporarily unavailable. Removing the
+          # whole map can turn one missing tag into an unpinned production workload
+          # and makes Pulumi reject the entire deployment.
           # The key MUST be namespaced `wwwinfra:imageDigests` to match the program's
           # `new Config("wwwinfra").getObject("imageDigests")`. A bare `--path
           # imageDigests.<svc>` writes under the PROJECT namespace (world-wide-webb:),
           # which the program never reads, so every image silently renders `:main`
           # (mutable tag) and pods NEVER roll to the freshly built build (www-j934.9).
-          pulumi config rm wwwinfra:imageDigests --stack "$STACK" >/dev/null 2>&1 || true
           for svc in $(echo "$DIGEST_MAP" | jq -r 'keys[]'); do
             dig=$(echo "$DIGEST_MAP" | jq -r --arg s "$svc" '.[$s]')
             pulumi config set --path "wwwinfra:imageDigests.$svc" "$dig" --stack "$STACK"
