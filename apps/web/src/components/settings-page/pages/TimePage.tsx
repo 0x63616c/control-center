@@ -6,6 +6,7 @@ import {
 } from "../../../lib/panel-maintenance";
 import { setGoalDayCutoffHour, setTimeZone, useSettings } from "../../../lib/settings";
 import { Switch } from "../../ui/Switch";
+import { WheelPicker, type WheelPickerValue } from "../../ui/WheelPicker";
 import { ActionButton, RowShell, SectionCard } from "../blocks";
 import type { PageProps } from "../SettingsPage";
 
@@ -35,7 +36,28 @@ function timeZoneLabel(timeZone: string): string {
 type MaintenanceState =
   | { readonly status: "loading" }
   | { readonly status: "unavailable" }
-  | { readonly status: "ready"; readonly configuration: PanelMaintenanceConfiguration };
+  | {
+      readonly status: "ready" | "saving";
+      readonly configuration: PanelMaintenanceConfiguration;
+    };
+
+const HOURS: readonly WheelPickerValue<number>[] = Array.from({ length: 24 }, (_, hour) => ({
+  value: hour,
+  label: String(hour).padStart(2, "0"),
+}));
+const MINUTES: readonly WheelPickerValue<number>[] = Array.from({ length: 60 }, (_, minute) => ({
+  value: minute,
+  label: String(minute).padStart(2, "0"),
+}));
+
+function maintenanceTimeParts(time: string): { hour: number; minute: number } {
+  const [hour = "3", minute = "0"] = time.split(":");
+  return { hour: Number(hour), minute: Number(minute) };
+}
+
+function maintenanceTime(hour: number, minute: number): string {
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
 
 function nextRunLabel(nextRunAtMs: number | null): string {
   if (nextRunAtMs === null) return "Paused";
@@ -51,7 +73,6 @@ export function TimePage({
 }: PageProps & { readonly maintenance?: PanelMaintenanceClient }) {
   const { goalDayCutoffHour, timeZone } = useSettings();
   const [maintenanceState, setMaintenanceState] = useState<MaintenanceState>({ status: "loading" });
-  const [savingMaintenance, setSavingMaintenance] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -74,15 +95,27 @@ export function TimePage({
 
   const updateMaintenance = useCallback(
     (update: Pick<PanelMaintenanceConfiguration, "enabled" | "time">) => {
-      if (maintenanceState.status !== "ready" || savingMaintenance) return;
-      setSavingMaintenance(true);
+      if (maintenanceState.status !== "ready") return;
+      const previousConfiguration = maintenanceState.configuration;
+      setMaintenanceState({ status: "saving", configuration: previousConfiguration });
       void maintenance.set(update).then((configuration) => {
-        if (configuration) setMaintenanceState({ status: "ready", configuration });
-        setSavingMaintenance(false);
+        setMaintenanceState({
+          status: "ready",
+          configuration: configuration ?? previousConfiguration,
+        });
       });
     },
-    [maintenance, maintenanceState, savingMaintenance],
+    [maintenance, maintenanceState],
   );
+
+  const maintenanceConfiguration =
+    maintenanceState.status === "ready" || maintenanceState.status === "saving"
+      ? maintenanceState.configuration
+      : null;
+  const savingMaintenance = maintenanceState.status === "saving";
+  const timeParts = maintenanceConfiguration
+    ? maintenanceTimeParts(maintenanceConfiguration.time)
+    : null;
 
   return (
     <>
@@ -148,7 +181,7 @@ export function TimePage({
       </SectionCard>
 
       <SectionCard title="Panel maintenance">
-        {maintenanceState.status === "ready"
+        {maintenanceConfiguration && timeParts
           ? [
               <RowShell
                 key="enabled"
@@ -157,10 +190,10 @@ export function TimePage({
                 control={
                   <Switch
                     label="Nightly WebKit refresh"
-                    checked={maintenanceState.configuration.enabled}
+                    checked={maintenanceConfiguration.enabled}
                     disabled={savingMaintenance}
                     onChange={(enabled) =>
-                      updateMaintenance({ enabled, time: maintenanceState.configuration.time })
+                      updateMaintenance({ enabled, time: maintenanceConfiguration.time })
                     }
                   />
                 }
@@ -170,28 +203,46 @@ export function TimePage({
                 label="Maintenance time"
                 sub="Uses this iPad's local clock. The screen briefly shows a dark refresh cover."
                 control={
-                  <input
-                    type="time"
-                    aria-label="Maintenance time"
-                    value={maintenanceState.configuration.time}
-                    disabled={!maintenanceState.configuration.enabled || savingMaintenance}
-                    onChange={(event) =>
-                      updateMaintenance({
-                        enabled: maintenanceState.configuration.enabled,
-                        time: event.target.value,
-                      })
-                    }
+                  <div
+                    aria-disabled={savingMaintenance}
                     style={{
-                      width: 130,
-                      padding: "9px 12px",
-                      color: "var(--ink)",
-                      background: "var(--nest)",
-                      border: "1px solid var(--hair)",
-                      borderRadius: 10,
-                      fontFamily: "var(--mono)",
-                      fontSize: 14,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      opacity: savingMaintenance ? 0.55 : 1,
+                      pointerEvents: savingMaintenance ? "none" : "auto",
                     }}
-                  />
+                  >
+                    <WheelPicker
+                      label="Maintenance hour"
+                      values={HOURS}
+                      value={timeParts.hour}
+                      visibleRows={3}
+                      width={68}
+                      onChange={(hour) =>
+                        updateMaintenance({
+                          enabled: maintenanceConfiguration.enabled,
+                          time: maintenanceTime(hour, timeParts.minute),
+                        })
+                      }
+                    />
+                    <span aria-hidden style={{ fontSize: 22, color: "var(--ink-2)" }}>
+                      :
+                    </span>
+                    <WheelPicker
+                      label="Maintenance minute"
+                      values={MINUTES}
+                      value={timeParts.minute}
+                      visibleRows={3}
+                      width={68}
+                      onChange={(minute) =>
+                        updateMaintenance({
+                          enabled: maintenanceConfiguration.enabled,
+                          time: maintenanceTime(timeParts.hour, minute),
+                        })
+                      }
+                    />
+                  </div>
                 }
               />,
               <RowShell
@@ -200,7 +251,7 @@ export function TimePage({
                 sub="The native app stays running, so Guided Access and continuous uptime are preserved."
                 control={
                   <span style={{ fontFamily: "var(--mono)", fontSize: 14, color: "var(--ink)" }}>
-                    {nextRunLabel(maintenanceState.configuration.nextRunAtMs)}
+                    {nextRunLabel(maintenanceConfiguration.nextRunAtMs)}
                   </span>
                 }
               />,
@@ -209,7 +260,12 @@ export function TimePage({
                 label="Refresh now"
                 sub="Runs the same bounded reset now to verify the transition without waiting overnight."
                 control={
-                  <ActionButton onClick={() => void maintenance.runNow()}>Run now</ActionButton>
+                  <ActionButton
+                    disabled={savingMaintenance}
+                    onClick={() => void maintenance.runNow()}
+                  >
+                    Run now
+                  </ActionButton>
                 }
               />,
             ]

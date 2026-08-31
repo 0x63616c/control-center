@@ -240,6 +240,37 @@ enum KioskHealthTests {
             "an invalid minute is rejected"
         )
 
+        let scheduler = PanelMaintenanceScheduler(calendar: losAngeles)
+        Check.expect(
+            scheduler.nextDate(
+                for: PanelMaintenanceConfiguration(enabled: false, hour: 4, minute: 30),
+                after: beforeCustomTime
+            ) == nil,
+            "disabling maintenance cancels the next scheduled run"
+        )
+        Check.expect(
+            scheduler.nextDate(for: configurationStore.configuration, after: beforeCustomTime)
+                == sameDayCustomTime,
+            "the scheduler reads the persisted custom time"
+        )
+        let rescheduledConfiguration = PanelMaintenanceConfiguration(
+            enabled: true,
+            hour: 5,
+            minute: 15
+        )
+        Check.expect(
+            configurationStore.save(rescheduledConfiguration),
+            "a changed maintenance time is persisted for rescheduling"
+        )
+        let sameDayRescheduledTime = losAngeles.date(
+            from: DateComponents(year: 2026, month: 8, day: 31, hour: 5, minute: 15)
+        )!
+        Check.expect(
+            scheduler.nextDate(for: configurationStore.configuration, after: beforeCustomTime)
+                == sameDayRescheduledTime,
+            "a configuration change moves the next scheduled run"
+        )
+
         var scheduledPressure = PanelMemoryPressureRecoveryPolicy(
             windowMs: 60 * 60 * 1_000
         )
@@ -256,6 +287,34 @@ enum KioskHealthTests {
             scheduledPressure.scheduledMaintenanceAction(atMs: firstNightlyReset + 24 * 60 * 60 * 1_000)
                 == .stagedWebDocumentReset,
             "the next night's maintenance runs after the prior reset leaves the rolling hour"
+        )
+
+        var manualPressure = PanelMemoryPressureRecoveryPolicy(
+            windowMs: 60 * 60 * 1_000
+        )
+        let manualReset = Int64(500_000)
+        Check.expect(
+            manualPressure.manualMaintenanceAction(atMs: manualReset) == .stagedWebDocumentReset,
+            "manual maintenance performs the same staged document reset"
+        )
+        Check.expect(
+            manualPressure.action(atMs: manualReset + 1_000) == .suppressedByLoopProtection,
+            "manual maintenance joins the shared recovery circuit breaker"
+        )
+
+        Check.expect(
+            PanelMaintenanceTransition.action(for: .inertDocumentFinishedOrTimedOut)
+                == .loadAuthenticatedOriginKeepingCover,
+            "inert-document completion or fallback keeps the cover while loading Control Center"
+        )
+        Check.expect(
+            PanelMaintenanceTransition.action(for: .coverSafetyTimedOut)
+                == .loadAuthenticatedOriginKeepingCover,
+            "the cover safety fallback retries Control Center without revealing an unfinished WebView"
+        )
+        Check.expect(
+            PanelMaintenanceTransition.action(for: .authenticatedOriginFinished) == .dismissCover,
+            "only authenticated-origin completion dismisses the maintenance cover"
         )
 
         // --- Durable diagnostics compatibility + bounds (T-51) ---

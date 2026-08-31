@@ -3,8 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink } from "@trpc/client";
 import { getQueryKey } from "@trpc/react-query";
 import { useState } from "react";
-import { expect, fireEvent, fn, within } from "storybook/test";
-import type { PanelMaintenanceClient } from "../../../lib/panel-maintenance";
+import { expect, fn, waitFor, within } from "storybook/test";
+import type {
+  PanelMaintenanceClient,
+  PanelMaintenanceConfiguration,
+} from "../../../lib/panel-maintenance";
 import { trpc } from "../../../lib/trpc";
 import type { PageProps } from "../SettingsPage";
 import { BoardPage } from "./BoardPage";
@@ -142,13 +145,23 @@ export const Board: Story = {
   },
 };
 
+const setMaintenanceConfiguration = fn(
+  async (update: Pick<PanelMaintenanceConfiguration, "enabled" | "time">) => ({
+    ...update,
+    nextRunAtMs: 1_788_264_000_000,
+  }),
+);
+const runMaintenanceNow = fn(async () => true);
+
 export const Time: Story = {
   render: () => {
+    setMaintenanceConfiguration.mockClear();
+    runMaintenanceNow.mockClear();
     const maintenance: PanelMaintenanceClient = {
       isAvailable: () => true,
       get: fn(async () => ({ enabled: true, time: "03:00", nextRunAtMs: 1_788_260_400_000 })),
-      set: fn(async (update) => ({ ...update, nextRunAtMs: 1_788_264_000_000 })),
-      runNow: fn(async () => true),
+      set: setMaintenanceConfiguration,
+      runNow: runMaintenanceNow,
     };
     return <TimePage {...pageProps} maintenance={maintenance} />;
   },
@@ -158,10 +171,33 @@ export const Time: Story = {
     await expect(
       await canvas.findByRole("switch", { name: "Nightly WebKit refresh" }),
     ).toBeChecked();
-    const time = canvas.getByLabelText("Maintenance time");
-    await expect(time).toHaveValue("03:00");
-    fireEvent.change(time, { target: { value: "04:30" } });
-    await canvas.findByDisplayValue("04:30");
-    await expect(canvas.getByRole("button", { name: "Run now" })).toBeInTheDocument();
+    const hourWheel = canvas.getByRole("listbox", { name: "Maintenance hour" });
+    await expect(within(hourWheel).getByRole("option", { name: "03" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    within(hourWheel).getByRole("option", { name: "04" }).click();
+    await waitFor(() =>
+      expect(within(hourWheel).getByRole("option", { name: "04" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      ),
+    );
+    within(canvas.getByRole("listbox", { name: "Maintenance minute" }))
+      .getByRole("option", { name: "30" })
+      .click();
+    await waitFor(() =>
+      expect(
+        within(canvas.getByRole("listbox", { name: "Maintenance minute" })).getByRole("option", {
+          name: "30",
+        }),
+      ).toHaveAttribute("aria-selected", "true"),
+    );
+    await expect(setMaintenanceConfiguration).toHaveBeenLastCalledWith({
+      enabled: true,
+      time: "04:30",
+    });
+    canvas.getByRole("button", { name: "Run now" }).click();
+    await expect(runMaintenanceNow).toHaveBeenCalledOnce();
   },
 };

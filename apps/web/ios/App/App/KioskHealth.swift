@@ -180,6 +180,10 @@ struct PanelMemoryPressureRecoveryPolicy {
         return .stagedWebDocumentReset
     }
 
+    mutating func manualMaintenanceAction(atMs nowMs: Int64) -> PanelMemoryPressureRecoveryAction {
+        scheduledMaintenanceAction(atMs: nowMs)
+    }
+
     private mutating func discardRecoveriesOutsideWindow(atMs nowMs: Int64) {
         let windowStart = nowMs - windowMs
         recoveries.removeAll { $0.timestampMs < windowStart }
@@ -198,6 +202,44 @@ struct PanelNightlyMaintenanceSchedule {
             matchingPolicy: .nextTime,
             direction: .forward
         )
+    }
+}
+
+struct PanelMaintenanceScheduler {
+    let calendar: Calendar
+
+    func nextDate(
+        for configuration: PanelMaintenanceConfiguration,
+        after date: Date
+    ) -> Date? {
+        guard configuration.enabled else { return nil }
+        return PanelNightlyMaintenanceSchedule(
+            hour: configuration.hour,
+            minute: configuration.minute,
+            calendar: calendar
+        ).nextDate(after: date)
+    }
+}
+
+enum PanelMaintenanceTransitionEvent {
+    case authenticatedOriginFinished
+    case inertDocumentFinishedOrTimedOut
+    case coverSafetyTimedOut
+}
+
+enum PanelMaintenanceTransitionAction: Equatable {
+    case dismissCover
+    case loadAuthenticatedOriginKeepingCover
+}
+
+enum PanelMaintenanceTransition {
+    static func action(for event: PanelMaintenanceTransitionEvent) -> PanelMaintenanceTransitionAction {
+        switch event {
+        case .authenticatedOriginFinished:
+            return .dismissCover
+        case .inertDocumentFinishedOrTimedOut, .coverSafetyTimedOut:
+            return .loadAuthenticatedOriginKeepingCover
+        }
     }
 }
 

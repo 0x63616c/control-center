@@ -181,9 +181,26 @@ export function ChevronValue({
 }
 
 /** A small secondary action button (Edit layout, Start, View logs, ...). */
-export function ActionButton({ children, onClick }: { children: ReactNode; onClick?: () => void }) {
+export function ActionButton({
+  children,
+  disabled = false,
+  onClick,
+}: {
+  children: ReactNode;
+  disabled?: boolean;
+  onClick?: () => void;
+}) {
   return (
-    <button type="button" onClick={onClick} style={ACTION_BUTTON}>
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        ...ACTION_BUTTON,
+        cursor: disabled ? "default" : ACTION_BUTTON.cursor,
+        opacity: disabled ? 0.55 : 1,
+      }}
+    >
       {children}
     </button>
   );

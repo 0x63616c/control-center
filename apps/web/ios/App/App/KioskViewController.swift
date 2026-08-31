@@ -60,6 +60,7 @@ class KioskViewController: CAPBridgeViewController {
     private var stagedResetFallbackTimer: Timer?
     private var maintenanceCoverFallbackTimer: Timer?
     private var maintenanceCoverView: UIView?
+    private weak var maintenanceCoverLabel: UILabel?
     private let maintenanceConfigurationStore = PanelMaintenanceConfigurationStore()
     private var memoryPressurePolicy = PanelMemoryPressureRecoveryPolicy(
         windowMs: 60 * 60 * 1_000
@@ -192,12 +193,8 @@ class KioskViewController: CAPBridgeViewController {
         guard nightlyMaintenanceTimer == nil else { return }
         let configuration = maintenanceConfigurationStore.configuration
         guard configuration.enabled else { return }
-        let schedule = PanelNightlyMaintenanceSchedule(
-            hour: configuration.hour,
-            minute: configuration.minute,
-            calendar: .current
-        )
-        guard let nextDate = schedule.nextDate(after: Date()) else { return }
+        let scheduler = PanelMaintenanceScheduler(calendar: .current)
+        guard let nextDate = scheduler.nextDate(for: configuration, after: Date()) else { return }
         let timer = Timer(fire: nextDate, interval: 0, repeats: false) { [weak self] _ in
             guard let self else { return }
             self.nightlyMaintenanceTimer = nil
@@ -225,7 +222,7 @@ class KioskViewController: CAPBridgeViewController {
     @objc private func performManualMaintenance() {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
         executeRecovery(
-            memoryPressurePolicy.scheduledMaintenanceAction(atMs: nowMs),
+            memoryPressurePolicy.manualMaintenanceAction(atMs: nowMs),
             trigger: .manualMaintenance
         )
     }
@@ -243,7 +240,9 @@ class KioskViewController: CAPBridgeViewController {
         switch action {
         case .authenticatedOriginReload:
             showMaintenanceCover()
-            loadAuthenticatedOrigin { [weak self] in self?.dismissMaintenanceCover() }
+            loadAuthenticatedOrigin { [weak self] in
+                self?.handleMaintenanceTransition(.authenticatedOriginFinished)
+            }
         case .stagedWebDocumentReset:
             showMaintenanceCover()
             stageAuthenticatedOriginReset()
@@ -254,7 +253,7 @@ class KioskViewController: CAPBridgeViewController {
 
     private func stageAuthenticatedOriginReset() {
         guard let webView, let navigationDelegateProxy else {
-            loadAuthenticatedOrigin { [weak self] in self?.dismissMaintenanceCover() }
+            handleMaintenanceTransition(.inertDocumentFinishedOrTimedOut)
             return
         }
         stagedResetFallbackTimer?.invalidate()
@@ -268,7 +267,7 @@ class KioskViewController: CAPBridgeViewController {
             self.stagedResetFallbackTimer?.invalidate()
             self.stagedResetFallbackTimer = nil
             navigationDelegateProxy?.clearAwaitedNavigation()
-            self.loadAuthenticatedOrigin { [weak self] in self?.dismissMaintenanceCover() }
+            self.handleMaintenanceTransition(.inertDocumentFinishedOrTimedOut)
         }
         let fallback = Timer(timeInterval: 10, repeats: false) { _ in finishReset() }
         RunLoop.main.add(fallback, forMode: .common)
@@ -306,13 +305,31 @@ class KioskViewController: CAPBridgeViewController {
             ])
             view.addSubview(cover)
             maintenanceCoverView = cover
+            maintenanceCoverLabel = label
         }
+        armMaintenanceCoverSafetyTimer()
+    }
 
+    private func armMaintenanceCoverSafetyTimer() {
+        maintenanceCoverFallbackTimer?.invalidate()
         let fallback = Timer(timeInterval: 20, repeats: false) { [weak self] _ in
-            self?.dismissMaintenanceCover()
+            self?.handleMaintenanceTransition(.coverSafetyTimedOut)
         }
         RunLoop.main.add(fallback, forMode: .common)
         maintenanceCoverFallbackTimer = fallback
+    }
+
+    private func handleMaintenanceTransition(_ event: PanelMaintenanceTransitionEvent) {
+        switch PanelMaintenanceTransition.action(for: event) {
+        case .dismissCover:
+            dismissMaintenanceCover()
+        case .loadAuthenticatedOriginKeepingCover:
+            maintenanceCoverLabel?.text = "Still refreshing Control Center…"
+            armMaintenanceCoverSafetyTimer()
+            loadAuthenticatedOrigin { [weak self] in
+                self?.handleMaintenanceTransition(.authenticatedOriginFinished)
+            }
+        }
     }
 
     private func dismissMaintenanceCover() {
@@ -320,6 +337,7 @@ class KioskViewController: CAPBridgeViewController {
         maintenanceCoverFallbackTimer = nil
         guard let cover = maintenanceCoverView else { return }
         maintenanceCoverView = nil
+        maintenanceCoverLabel = nil
         UIView.animate(withDuration: 0.35, animations: {
             cover.alpha = 0
         }, completion: { _ in
