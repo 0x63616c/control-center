@@ -25,3 +25,13 @@ swiftc -O \
   "$tests/KioskHealthTests.swift" \
   -o "$bin"
 "$bin"
+
+# Maintenance must never tear down Capacitor or swap the application's root
+# controller. Builds 108 and 109 both proved those in-process reset attempts can
+# SIGABRT on the physical wall iPad; the apparent reopen was Guided Access/iOS
+# relaunching the crashed app.
+if rg -n 'replaceCapacitorBridge|rootViewController[[:space:]]*=' \
+  "$app/KioskHealth.swift" "$app/KioskViewController.swift"; then
+  echo "unsafe Capacitor bridge/root-controller replacement remains" >&2
+  exit 1
+fi

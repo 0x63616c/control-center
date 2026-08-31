@@ -130,15 +130,11 @@ struct Backoff {
 // bounded policy so it can be proven without UIKit or an iOS simulator.
 enum PanelMemoryPressureRecoveryAction {
     case authenticatedOriginReload
-    case replaceCapacitorBridge
     case suppressedByLoopProtection
 
     var diagnosticsOutcome: PanelRecoveryOutcome {
         switch self {
         case .authenticatedOriginReload: .authenticatedOriginReload
-        // Keep the established wire value so Build 104+ analytics can compare
-        // strong recoveries across app versions without a schema migration.
-        case .replaceCapacitorBridge: .stagedWebDocumentReset
         case .suppressedByLoopProtection: .suppressedByLoopProtection
         }
     }
@@ -160,13 +156,8 @@ struct PanelMemoryPressureRecoveryPolicy {
     mutating func action(atMs nowMs: Int64) -> PanelMemoryPressureRecoveryAction {
         discardRecoveriesOutsideWindow(atMs: nowMs)
 
-        if recoveries.contains(where: { $0.action == .replaceCapacitorBridge }) {
+        if !recoveries.isEmpty {
             return .suppressedByLoopProtection
-        }
-
-        if let latest = recoveries.last, nowMs - latest.timestampMs < windowMs {
-            recoveries.append((nowMs, .replaceCapacitorBridge))
-            return .replaceCapacitorBridge
         }
 
         recoveries.append((nowMs, .authenticatedOriginReload))
@@ -174,12 +165,7 @@ struct PanelMemoryPressureRecoveryPolicy {
     }
 
     mutating func scheduledMaintenanceAction(atMs nowMs: Int64) -> PanelMemoryPressureRecoveryAction {
-        discardRecoveriesOutsideWindow(atMs: nowMs)
-        if recoveries.contains(where: { $0.action == .replaceCapacitorBridge }) {
-            return .suppressedByLoopProtection
-        }
-        recoveries.append((nowMs, .replaceCapacitorBridge))
-        return .replaceCapacitorBridge
+        action(atMs: nowMs)
     }
 
     mutating func manualMaintenanceAction(atMs nowMs: Int64) -> PanelMemoryPressureRecoveryAction {
