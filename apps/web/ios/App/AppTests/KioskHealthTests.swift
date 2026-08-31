@@ -127,8 +127,8 @@ enum KioskHealthTests {
             "first memory warning triggers an authenticated origin reload"
         )
         Check.expect(
-            pressure.action(atMs: repeatedWarning) == .stagedWebDocumentReset,
-            "the first repeated warning escalates to a staged document reset"
+            pressure.action(atMs: repeatedWarning) == .replaceCapacitorBridge,
+            "the first repeated warning escalates to a Capacitor bridge replacement"
         )
         Check.expect(
             pressure.action(atMs: firstWarning + 4 * 60 * 1_000) == .suppressedByLoopProtection,
@@ -158,7 +158,7 @@ enum KioskHealthTests {
         )
         Check.expect(
             observedPressure.action(atMs: observedFirstWarning + 56 * 60 * 1_000 + 55 * 1_000)
-                == .stagedWebDocumentReset,
+                == .replaceCapacitorBridge,
             "a second warning 56m55s later escalates inside the rolling hour"
         )
 
@@ -276,8 +276,8 @@ enum KioskHealthTests {
         )
         let firstNightlyReset = Int64(24 * 60 * 60 * 1_000)
         Check.expect(
-            scheduledPressure.scheduledMaintenanceAction(atMs: firstNightlyReset) == .stagedWebDocumentReset,
-            "nightly maintenance performs the staged document reset"
+            scheduledPressure.scheduledMaintenanceAction(atMs: firstNightlyReset) == .replaceCapacitorBridge,
+            "nightly maintenance replaces the Capacitor bridge"
         )
         Check.expect(
             scheduledPressure.action(atMs: firstNightlyReset + 5 * 60 * 1_000) == .suppressedByLoopProtection,
@@ -285,7 +285,7 @@ enum KioskHealthTests {
         )
         Check.expect(
             scheduledPressure.scheduledMaintenanceAction(atMs: firstNightlyReset + 24 * 60 * 60 * 1_000)
-                == .stagedWebDocumentReset,
+                == .replaceCapacitorBridge,
             "the next night's maintenance runs after the prior reset leaves the rolling hour"
         )
 
@@ -294,19 +294,14 @@ enum KioskHealthTests {
         )
         let manualReset = Int64(500_000)
         Check.expect(
-            manualPressure.manualMaintenanceAction(atMs: manualReset) == .stagedWebDocumentReset,
-            "manual maintenance performs the same staged document reset"
+            manualPressure.manualMaintenanceAction(atMs: manualReset) == .replaceCapacitorBridge,
+            "manual maintenance replaces the Capacitor bridge"
         )
         Check.expect(
             manualPressure.action(atMs: manualReset + 1_000) == .suppressedByLoopProtection,
             "manual maintenance joins the shared recovery circuit breaker"
         )
 
-        Check.expect(
-            PanelMaintenanceTransition.action(for: .inertDocumentFinishedOrTimedOut)
-                == .loadAuthenticatedOriginKeepingCover,
-            "inert-document completion or fallback keeps the cover while loading Control Center"
-        )
         Check.expect(
             PanelMaintenanceTransition.action(for: .coverSafetyTimedOut)
                 == .loadAuthenticatedOriginKeepingCover,

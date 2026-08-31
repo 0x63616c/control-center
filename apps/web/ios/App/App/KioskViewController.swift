@@ -51,16 +51,81 @@ private final class KioskNavigationDelegateProxy: NSObject, WKNavigationDelegate
     }
 }
 
+// The maintenance cover belongs to the UIWindow rather than a bridge view
+// controller. A strong WebKit reset replaces the entire Capacitor controller,
+// so a controller-owned cover would disappear at exactly the point it is most
+// useful. Keeping this tiny bit of presentation state outside either bridge
+// lets the new controller finish loading before the old dashboard is revealed.
+private final class PanelMaintenanceCoverCoordinator {
+    static let shared = PanelMaintenanceCoverCoordinator()
+
+    private var coverView: UIView?
+    private weak var coverLabel: UILabel?
+    private(set) var isReplacingBridge = false
+
+    private init() {}
+
+    func show(over window: UIWindow) {
+        if coverView == nil {
+            let cover = UIView(frame: window.bounds)
+            cover.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            cover.backgroundColor = UIColor(red: 0.063, green: 0.078, blue: 0.098, alpha: 1)
+
+            let spinner = UIActivityIndicatorView(style: .medium)
+            spinner.color = UIColor(white: 0.72, alpha: 1)
+            spinner.startAnimating()
+            let label = UILabel()
+            label.text = "Refreshing Control Center…"
+            label.textColor = UIColor(white: 0.82, alpha: 1)
+            label.font = UIFont.systemFont(ofSize: 17, weight: .medium)
+            let stack = UIStackView(arrangedSubviews: [spinner, label])
+            stack.axis = .vertical
+            stack.alignment = .center
+            stack.spacing = 16
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            cover.addSubview(stack)
+            NSLayoutConstraint.activate([
+                stack.centerXAnchor.constraint(equalTo: cover.centerXAnchor),
+                stack.centerYAnchor.constraint(equalTo: cover.centerYAnchor),
+            ])
+            window.addSubview(cover)
+            coverView = cover
+            coverLabel = label
+        }
+        if let coverView {
+            window.bringSubviewToFront(coverView)
+        }
+    }
+
+    func beginBridgeReplacement(over window: UIWindow) {
+        isReplacingBridge = true
+        show(over: window)
+    }
+
+    func showSlowRefresh() {
+        coverLabel?.text = "Still refreshing Control Center…"
+    }
+
+    func dismiss() {
+        isReplacingBridge = false
+        guard let cover = coverView else { return }
+        coverView = nil
+        coverLabel = nil
+        UIView.animate(withDuration: 0.35, animations: {
+            cover.alpha = 0
+        }, completion: { _ in
+            cover.removeFromSuperview()
+        })
+    }
+}
+
 class KioskViewController: CAPBridgeViewController {
     private var watchdog: KioskWatchdog?
     private var navigationDelegateProxy: KioskNavigationDelegateProxy?
     private var observesMemoryPressure = false
     private var observesMaintenanceRequests = false
     private var nightlyMaintenanceTimer: Timer?
-    private var stagedResetFallbackTimer: Timer?
     private var maintenanceCoverFallbackTimer: Timer?
-    private var maintenanceCoverView: UIView?
-    private weak var maintenanceCoverLabel: UILabel?
     private let maintenanceConfigurationStore = PanelMaintenanceConfigurationStore()
     private var memoryPressurePolicy = PanelMemoryPressureRecoveryPolicy(
         windowMs: 60 * 60 * 1_000
@@ -105,7 +170,6 @@ class KioskViewController: CAPBridgeViewController {
 
     deinit {
         nightlyMaintenanceTimer?.invalidate()
-        stagedResetFallbackTimer?.invalidate()
         maintenanceCoverFallbackTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
@@ -129,6 +193,15 @@ class KioskViewController: CAPBridgeViewController {
     // CF-Access headers so the first authenticated nav establishes the
     // CF_Authorization cookie. No-op when the origin is open (kioskAccess == nil).
     private func injectAccessHeadersIfNeeded() {
+        if PanelMaintenanceCoverCoordinator.shared.isReplacingBridge {
+            guard let window = view.window else { return }
+            PanelMaintenanceCoverCoordinator.shared.show(over: window)
+            armMaintenanceCoverSafetyTimer()
+            loadAuthenticatedOrigin { [weak self] in
+                self?.handleMaintenanceTransition(.authenticatedOriginFinished)
+            }
+            return
+        }
         guard kioskAccess != nil else { return }
         loadAuthenticatedOrigin()
     }
@@ -243,70 +316,42 @@ class KioskViewController: CAPBridgeViewController {
             loadAuthenticatedOrigin { [weak self] in
                 self?.handleMaintenanceTransition(.authenticatedOriginFinished)
             }
-        case .stagedWebDocumentReset:
+        case .replaceCapacitorBridge:
             showMaintenanceCover()
-            stageAuthenticatedOriginReset()
+            replaceCapacitorBridge()
         case .suppressedByLoopProtection:
             break
         }
     }
 
-    private func stageAuthenticatedOriginReset() {
-        guard let webView, let navigationDelegateProxy else {
-            handleMaintenanceTransition(.inertDocumentFinishedOrTimedOut)
+    private func replaceCapacitorBridge() {
+        guard let window = view.window else {
+            loadAuthenticatedOrigin { [weak self] in
+                self?.handleMaintenanceTransition(.authenticatedOriginFinished)
+            }
             return
         }
-        stagedResetFallbackTimer?.invalidate()
-        webView.stopLoading()
-        // A same-origin navigation replaces the document but lets WebKit retain
-        // its old graph while the new response is fetched. Commit a tiny inert
-        // document first so repeated pressure gets one stronger, public-API-only
-        // teardown without clearing cookies, website data, or feature state.
-        let finishReset = { [weak self, weak webView, weak navigationDelegateProxy] in
-            guard let self, let webView, self.webView === webView else { return }
-            self.stagedResetFallbackTimer?.invalidate()
-            self.stagedResetFallbackTimer = nil
-            navigationDelegateProxy?.clearAwaitedNavigation()
-            self.handleMaintenanceTransition(.inertDocumentFinishedOrTimedOut)
+        navigationDelegateProxy?.clearAwaitedNavigation()
+        PanelMaintenanceCoverCoordinator.shared.beginBridgeReplacement(over: window)
+
+        // Build 108 proved that navigating the live Capacitor WKWebView to an
+        // inert about:blank document can terminate the entire app on the wall
+        // iPad. Replace the bridge controller instead: this creates a fresh
+        // WKWebView/WebContent process while the UIApplication, diagnostics run,
+        // Guided Access session, cookie store, and website data stay alive.
+        // Defer the swap until the notification/plugin call has unwound so the
+        // bridge that delivered the request is never torn down mid-callback.
+        DispatchQueue.main.async {
+            let replacement = KioskViewController()
+            window.rootViewController = replacement
+            window.makeKeyAndVisible()
+            PanelMaintenanceCoverCoordinator.shared.show(over: window)
         }
-        let fallback = Timer(timeInterval: 10, repeats: false) { _ in finishReset() }
-        RunLoop.main.add(fallback, forMode: .common)
-        stagedResetFallbackTimer = fallback
-        let navigation = webView.loadHTMLString(
-            "<!doctype html><meta name=\"color-scheme\" content=\"dark\"><style>html{background:#101419}</style><title>Refreshing</title>",
-            baseURL: nil
-        )
-        navigationDelegateProxy.whenFinished(navigation, perform: finishReset)
     }
 
     private func showMaintenanceCover() {
-        maintenanceCoverFallbackTimer?.invalidate()
-        if maintenanceCoverView == nil {
-            let cover = UIView(frame: view.bounds)
-            cover.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            cover.backgroundColor = UIColor(red: 0.063, green: 0.078, blue: 0.098, alpha: 1)
-
-            let spinner = UIActivityIndicatorView(style: .medium)
-            spinner.color = UIColor(white: 0.72, alpha: 1)
-            spinner.startAnimating()
-            let label = UILabel()
-            label.text = "Refreshing Control Center…"
-            label.textColor = UIColor(white: 0.82, alpha: 1)
-            label.font = UIFont.systemFont(ofSize: 17, weight: .medium)
-            let stack = UIStackView(arrangedSubviews: [spinner, label])
-            stack.axis = .vertical
-            stack.alignment = .center
-            stack.spacing = 16
-            stack.translatesAutoresizingMaskIntoConstraints = false
-            cover.addSubview(stack)
-            NSLayoutConstraint.activate([
-                stack.centerXAnchor.constraint(equalTo: cover.centerXAnchor),
-                stack.centerYAnchor.constraint(equalTo: cover.centerYAnchor),
-            ])
-            view.addSubview(cover)
-            maintenanceCoverView = cover
-            maintenanceCoverLabel = label
-        }
+        guard let window = view.window else { return }
+        PanelMaintenanceCoverCoordinator.shared.show(over: window)
         armMaintenanceCoverSafetyTimer()
     }
 
@@ -324,7 +369,7 @@ class KioskViewController: CAPBridgeViewController {
         case .dismissCover:
             dismissMaintenanceCover()
         case .loadAuthenticatedOriginKeepingCover:
-            maintenanceCoverLabel?.text = "Still refreshing Control Center…"
+            PanelMaintenanceCoverCoordinator.shared.showSlowRefresh()
             armMaintenanceCoverSafetyTimer()
             loadAuthenticatedOrigin { [weak self] in
                 self?.handleMaintenanceTransition(.authenticatedOriginFinished)
@@ -335,14 +380,7 @@ class KioskViewController: CAPBridgeViewController {
     private func dismissMaintenanceCover() {
         maintenanceCoverFallbackTimer?.invalidate()
         maintenanceCoverFallbackTimer = nil
-        guard let cover = maintenanceCoverView else { return }
-        maintenanceCoverView = nil
-        maintenanceCoverLabel = nil
-        UIView.animate(withDuration: 0.35, animations: {
-            cover.alpha = 0
-        }, completion: { _ in
-            cover.removeFromSuperview()
-        })
+        PanelMaintenanceCoverCoordinator.shared.dismiss()
     }
 
     // The kiosk is unattended, so it must recover on its own from a Cloudflare
