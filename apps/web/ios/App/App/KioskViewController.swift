@@ -43,9 +43,7 @@ class KioskViewController: CAPBridgeViewController {
     private var navigationDelegateProxy: KioskNavigationDelegateProxy?
     private var observesMemoryPressure = false
     private var memoryPressurePolicy = PanelMemoryPressureRecoveryPolicy(
-        cooldownMs: 15 * 60 * 1_000,
-        windowMs: 60 * 60 * 1_000,
-        maxRecoveriesPerWindow: 3
+        windowMs: 60 * 60 * 1_000
     )
 
     override var prefersStatusBarHidden: Bool {

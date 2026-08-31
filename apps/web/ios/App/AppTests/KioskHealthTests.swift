@@ -118,9 +118,7 @@ enum KioskHealthTests {
         // on Builds 102/103. Recover the hosted document immediately, but never
         // permit warning storms to turn into an unattended reload loop.
         var pressure = PanelMemoryPressureRecoveryPolicy(
-            cooldownMs: 15 * 60 * 1_000,
-            windowMs: 60 * 60 * 1_000,
-            maxRecoveriesPerWindow: 3
+            windowMs: 60 * 60 * 1_000
         )
         let firstWarning = Int64(1_000_000)
         let repeatedWarning = firstWarning + 192 * 1_000
@@ -134,7 +132,7 @@ enum KioskHealthTests {
         )
         Check.expect(
             pressure.action(atMs: firstWarning + 4 * 60 * 1_000) == .suppressedByLoopProtection,
-            "further warnings inside the cooldown are suppressed"
+            "further warnings after staged escalation are suppressed"
         )
         Check.expect(
             pressure.action(atMs: repeatedWarning + 15 * 60 * 1_000) == .suppressedByLoopProtection,
@@ -149,6 +147,20 @@ enum KioskHealthTests {
             "recovery resumes after the staged escalation leaves the window"
         )
         Check.expect(pressure.recoveryCount == 1, "policy retains only rolling-window recovery timestamps")
+
+        var observedPressure = PanelMemoryPressureRecoveryPolicy(
+            windowMs: 60 * 60 * 1_000
+        )
+        let observedFirstWarning = Int64(1_000_000)
+        Check.expect(
+            observedPressure.action(atMs: observedFirstWarning) == .authenticatedOriginReload,
+            "observed first warning triggers an authenticated origin reload"
+        )
+        Check.expect(
+            observedPressure.action(atMs: observedFirstWarning + 56 * 60 * 1_000 + 55 * 1_000)
+                == .stagedWebDocumentReset,
+            "a second warning 56m55s later escalates inside the rolling hour"
+        )
 
         // --- Durable diagnostics compatibility + bounds (T-51) ---
         // Build 104 must decode the smaller Build 103 record already persisted
