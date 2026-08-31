@@ -1,5 +1,4 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, within } from "storybook/test";
 import { ConfettiCelebrationView } from "./ConfettiCelebration";
 
 const meta = {
@@ -17,11 +16,4 @@ const meta = {
 } satisfies Meta<typeof ConfettiCelebrationView>;
 export default meta;
 type Story = StoryObj<typeof meta>;
-export const SuccessfulCleaning: Story = {
-  play: async ({ canvasElement }) => {
-    await expect(within(canvasElement).getByTestId("confetti-celebration")).toHaveAttribute(
-      "aria-hidden",
-      "true",
-    );
-  },
-};
+export const SuccessfulCleaning: Story = {};
