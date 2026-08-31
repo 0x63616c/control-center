@@ -142,25 +142,10 @@ class KioskViewController: CAPBridgeViewController {
 
     @objc private func recoverFromMemoryPressure() {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
-        switch memoryPressurePolicy.action(atMs: nowMs) {
-        case .authenticatedOriginReload:
-            KioskDiagnosticsRecorder.shared.recordRecovery(
-                trigger: .memoryWarning,
-                outcome: .authenticatedOriginReload
-            )
-            loadAuthenticatedOrigin()
-        case .stagedWebDocumentReset:
-            KioskDiagnosticsRecorder.shared.recordRecovery(
-                trigger: .memoryWarning,
-                outcome: .stagedWebDocumentReset
-            )
-            stageAuthenticatedOriginReset()
-        case .suppressedByLoopProtection:
-            KioskDiagnosticsRecorder.shared.recordRecovery(
-                trigger: .memoryWarning,
-                outcome: .suppressedByLoopProtection
-            )
-        }
+        executeRecovery(
+            memoryPressurePolicy.action(atMs: nowMs),
+            trigger: .memoryWarning
+        )
     }
 
     private func scheduleNightlyMaintenanceIfNeeded() {
@@ -179,21 +164,21 @@ class KioskViewController: CAPBridgeViewController {
 
     private func performNightlyMaintenance() {
         let nowMs = Int64(Date().timeIntervalSince1970 * 1_000)
-        let action = memoryPressurePolicy.scheduledMaintenanceAction(atMs: nowMs)
-        let outcome: PanelRecoveryOutcome
-        switch action {
-        case .authenticatedOriginReload:
-            outcome = .authenticatedOriginReload
-        case .stagedWebDocumentReset:
-            outcome = .stagedWebDocumentReset
-        case .suppressedByLoopProtection:
-            outcome = .suppressedByLoopProtection
-        }
-        // Persist the decision before navigation so the nightly event survives
+        executeRecovery(
+            memoryPressurePolicy.scheduledMaintenanceAction(atMs: nowMs),
+            trigger: .scheduledMaintenance
+        )
+    }
+
+    private func executeRecovery(
+        _ action: PanelMemoryPressureRecoveryAction,
+        trigger: PanelRecoveryTrigger
+    ) {
+        // Persist the decision before navigation so the recovery event survives
         // even if WebKit or iOS terminates the process during recovery.
         KioskDiagnosticsRecorder.shared.recordRecovery(
-            trigger: .scheduledMaintenance,
-            outcome: outcome
+            trigger: trigger,
+            outcome: action.diagnosticsOutcome
         )
         switch action {
         case .authenticatedOriginReload:

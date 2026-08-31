@@ -132,6 +132,14 @@ enum PanelMemoryPressureRecoveryAction {
     case authenticatedOriginReload
     case stagedWebDocumentReset
     case suppressedByLoopProtection
+
+    var diagnosticsOutcome: PanelRecoveryOutcome {
+        switch self {
+        case .authenticatedOriginReload: .authenticatedOriginReload
+        case .stagedWebDocumentReset: .stagedWebDocumentReset
+        case .suppressedByLoopProtection: .suppressedByLoopProtection
+        }
+    }
 }
 
 struct PanelMemoryPressureRecoveryPolicy {

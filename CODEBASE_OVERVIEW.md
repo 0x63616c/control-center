@@ -21,6 +21,10 @@ background loops and jobs
   -> desired-state reconciliation, weather ingest, party mode, weight ingest,
      GitHub deploy polling
 
+device-local maintenance
+  -> native Capacitor shell calendar schedule
+  -> must work without backend or Temporal connectivity
+
 deploy
   -> GitHub Actions
   -> GHCR amd64 images (the home-server node is x86)
