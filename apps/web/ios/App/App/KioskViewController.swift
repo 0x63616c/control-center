@@ -184,17 +184,25 @@ class KioskViewController: CAPBridgeViewController {
         switch action {
         case .authenticatedOriginReload:
             outcome = .authenticatedOriginReload
-            loadAuthenticatedOrigin()
         case .stagedWebDocumentReset:
             outcome = .stagedWebDocumentReset
-            stageAuthenticatedOriginReset()
         case .suppressedByLoopProtection:
             outcome = .suppressedByLoopProtection
         }
+        // Persist the decision before navigation so the nightly event survives
+        // even if WebKit or iOS terminates the process during recovery.
         KioskDiagnosticsRecorder.shared.recordRecovery(
             trigger: .scheduledMaintenance,
             outcome: outcome
         )
+        switch action {
+        case .authenticatedOriginReload:
+            loadAuthenticatedOrigin()
+        case .stagedWebDocumentReset:
+            stageAuthenticatedOriginReset()
+        case .suppressedByLoopProtection:
+            break
+        }
     }
 
     private func stageAuthenticatedOriginReset() {
