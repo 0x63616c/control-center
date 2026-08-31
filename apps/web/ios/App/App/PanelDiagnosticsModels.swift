@@ -16,6 +16,7 @@ struct PanelWebContentTerminationEvent: Codable {
 enum PanelRecoveryTrigger: String, Codable {
     case memoryWarning = "memory-warning"
     case scheduledMaintenance = "scheduled-maintenance"
+    case manualMaintenance = "manual-maintenance"
 }
 
 enum PanelRecoveryOutcome: String, Codable {

@@ -3,7 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink } from "@trpc/client";
 import { getQueryKey } from "@trpc/react-query";
 import { useState } from "react";
-import { expect, fn, within } from "storybook/test";
+import { expect, fn, waitFor, within } from "storybook/test";
+import type {
+  PanelMaintenanceClient,
+  PanelMaintenanceConfiguration,
+} from "../../../lib/panel-maintenance";
 import { trpc } from "../../../lib/trpc";
 import type { PageProps } from "../SettingsPage";
 import { BoardPage } from "./BoardPage";
@@ -141,11 +145,59 @@ export const Board: Story = {
   },
 };
 
+const setMaintenanceConfiguration = fn(
+  async (update: Pick<PanelMaintenanceConfiguration, "enabled" | "time">) => ({
+    ...update,
+    nextRunAtMs: 1_788_264_000_000,
+  }),
+);
+const runMaintenanceNow = fn(async () => true);
+
 export const Time: Story = {
-  render: () => <TimePage {...pageProps} />,
+  render: () => {
+    setMaintenanceConfiguration.mockClear();
+    runMaintenanceNow.mockClear();
+    const maintenance: PanelMaintenanceClient = {
+      isAvailable: () => true,
+      get: fn(async () => ({ enabled: true, time: "03:00", nextRunAtMs: 1_788_260_400_000 })),
+      set: setMaintenanceConfiguration,
+      runNow: runMaintenanceNow,
+    };
+    return <TimePage {...pageProps} maintenance={maintenance} />;
+  },
   play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByRole("combobox", { name: "Time zone" })).toBeInTheDocument();
     await expect(
-      within(canvasElement).getByRole("combobox", { name: "Time zone" }),
-    ).toBeInTheDocument();
+      await canvas.findByRole("switch", { name: "Nightly WebKit refresh" }),
+    ).toBeChecked();
+    const hourWheel = canvas.getByRole("listbox", { name: "Maintenance hour" });
+    await expect(within(hourWheel).getByRole("option", { name: "03" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    within(hourWheel).getByRole("option", { name: "04" }).click();
+    await waitFor(() =>
+      expect(within(hourWheel).getByRole("option", { name: "04" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      ),
+    );
+    within(canvas.getByRole("listbox", { name: "Maintenance minute" }))
+      .getByRole("option", { name: "30" })
+      .click();
+    await waitFor(() =>
+      expect(
+        within(canvas.getByRole("listbox", { name: "Maintenance minute" })).getByRole("option", {
+          name: "30",
+        }),
+      ).toHaveAttribute("aria-selected", "true"),
+    );
+    await expect(setMaintenanceConfiguration).toHaveBeenLastCalledWith({
+      enabled: true,
+      time: "04:30",
+    });
+    canvas.getByRole("button", { name: "Run now" }).click();
+    await expect(runMaintenanceNow).toHaveBeenCalledOnce();
   },
 };

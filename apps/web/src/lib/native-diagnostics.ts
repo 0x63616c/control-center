@@ -47,7 +47,7 @@ const webContentTerminationEventSchema = z.object({
 });
 const recoveryEventSchema = z.object({
   timestampMs: timestampSchema,
-  trigger: z.enum(["memory-warning", "scheduled-maintenance"]),
+  trigger: z.enum(["memory-warning", "scheduled-maintenance", "manual-maintenance"]),
   outcome: z.enum([
     "authenticated-origin-reload",
     "staged-web-document-reset",
