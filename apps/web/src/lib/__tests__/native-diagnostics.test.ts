@@ -26,6 +26,11 @@ const getSnapshot = vi.fn<() => Promise<unknown>>(() =>
           trigger: "memory-warning",
           outcome: "staged-web-document-reset",
         },
+        {
+          timestampMs: 4,
+          trigger: "scheduled-maintenance",
+          outcome: "staged-web-document-reset",
+        },
       ],
       footprintBytes: 100,
       peakFootprintBytes: 120,
@@ -185,20 +190,30 @@ describe("startNativeDiagnostics", () => {
     });
     const recoveryEntries = getTail()
       .slice(before)
-      .filter(
-        (entry) =>
-          entry.source === "native-diagnostics" && entry.msg === "memory pressure recovery",
-      );
-    expect(recoveryEntries).toEqual([
-      expect.objectContaining({
-        level: "info",
-        data: expect.objectContaining({
-          runId: "current",
-          runOrigin: "current",
-          outcome: "staged-web-document-reset",
+      .filter((entry) => entry.source === "native-diagnostics" && entry.msg === "panel recovery");
+    expect(recoveryEntries).toHaveLength(2);
+    expect(recoveryEntries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: "info",
+          data: expect.objectContaining({
+            runId: "current",
+            runOrigin: "current",
+            trigger: "memory-warning",
+            outcome: "staged-web-document-reset",
+          }),
         }),
-      }),
-    ]);
+        expect.objectContaining({
+          level: "info",
+          data: expect.objectContaining({
+            runId: "current",
+            runOrigin: "current",
+            trigger: "scheduled-maintenance",
+            outcome: "staged-web-document-reset",
+          }),
+        }),
+      ]),
+    );
     stop();
   });
 

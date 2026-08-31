@@ -103,6 +103,9 @@
 - Pulumi digest pins use `wwwinfra:imageDigests.*`.
 - Infra-level cron jobs (backups, map-extract) live in `infra/src/crons.ts`; app-level
   scheduled work is Temporal Schedules declared in `features/<id>/temporal.ts` (ADR-0008).
+  Device-local native-shell maintenance that must run without backend connectivity
+  is not app-level scheduled work: schedule it in the native shell using local
+  calendar semantics, and keep the scheduling decision behind a pure tested seam.
 
 ## Ticket tracking
 
