@@ -127,16 +127,16 @@ enum KioskHealthTests {
             "first memory warning triggers an authenticated origin reload"
         )
         Check.expect(
-            pressure.action(atMs: repeatedWarning) == .replaceCapacitorBridge,
-            "the first repeated warning escalates to a Capacitor bridge replacement"
+            pressure.action(atMs: repeatedWarning) == .suppressedByLoopProtection,
+            "a repeated warning is suppressed instead of replacing the native bridge"
         )
         Check.expect(
             pressure.action(atMs: firstWarning + 4 * 60 * 1_000) == .suppressedByLoopProtection,
-            "further warnings after staged escalation are suppressed"
+            "further warnings remain suppressed"
         )
         Check.expect(
             pressure.action(atMs: repeatedWarning + 15 * 60 * 1_000) == .suppressedByLoopProtection,
-            "later warnings remain suppressed for the rolling hour after escalation"
+            "later warnings remain suppressed for the rolling hour after the refresh"
         )
         Check.expect(
             pressure.action(atMs: repeatedWarning + 30 * 60 * 1_000) == .suppressedByLoopProtection,
@@ -144,7 +144,7 @@ enum KioskHealthTests {
         )
         Check.expect(
             pressure.action(atMs: repeatedWarning + 61 * 60 * 1_000) == .authenticatedOriginReload,
-            "recovery resumes after the staged escalation leaves the window"
+            "recovery resumes after the prior reload leaves the rolling window"
         )
         Check.expect(pressure.recoveryCount == 1, "policy retains only rolling-window recovery timestamps")
 
@@ -158,8 +158,8 @@ enum KioskHealthTests {
         )
         Check.expect(
             observedPressure.action(atMs: observedFirstWarning + 56 * 60 * 1_000 + 55 * 1_000)
-                == .replaceCapacitorBridge,
-            "a second warning 56m55s later escalates inside the rolling hour"
+                == .suppressedByLoopProtection,
+            "a second warning 56m55s later remains inside the rolling-hour guard"
         )
 
         // --- Nightly 03:00 WebKit maintenance (T-58) ---
@@ -276,8 +276,8 @@ enum KioskHealthTests {
         )
         let firstNightlyReset = Int64(24 * 60 * 60 * 1_000)
         Check.expect(
-            scheduledPressure.scheduledMaintenanceAction(atMs: firstNightlyReset) == .replaceCapacitorBridge,
-            "nightly maintenance replaces the Capacitor bridge"
+            scheduledPressure.scheduledMaintenanceAction(atMs: firstNightlyReset) == .authenticatedOriginReload,
+            "nightly maintenance performs a supported authenticated-origin refresh"
         )
         Check.expect(
             scheduledPressure.action(atMs: firstNightlyReset + 5 * 60 * 1_000) == .suppressedByLoopProtection,
@@ -285,8 +285,8 @@ enum KioskHealthTests {
         )
         Check.expect(
             scheduledPressure.scheduledMaintenanceAction(atMs: firstNightlyReset + 24 * 60 * 60 * 1_000)
-                == .replaceCapacitorBridge,
-            "the next night's maintenance runs after the prior reset leaves the rolling hour"
+                == .authenticatedOriginReload,
+            "the next night's maintenance runs after the prior refresh leaves the rolling hour"
         )
 
         var manualPressure = PanelMemoryPressureRecoveryPolicy(
@@ -294,8 +294,8 @@ enum KioskHealthTests {
         )
         let manualReset = Int64(500_000)
         Check.expect(
-            manualPressure.manualMaintenanceAction(atMs: manualReset) == .replaceCapacitorBridge,
-            "manual maintenance replaces the Capacitor bridge"
+            manualPressure.manualMaintenanceAction(atMs: manualReset) == .authenticatedOriginReload,
+            "manual maintenance performs a supported authenticated-origin refresh"
         )
         Check.expect(
             manualPressure.action(atMs: manualReset + 1_000) == .suppressedByLoopProtection,

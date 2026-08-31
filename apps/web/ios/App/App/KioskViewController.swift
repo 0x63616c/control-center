@@ -34,11 +34,6 @@ private final class KioskNavigationDelegateProxy: NSObject, WKNavigationDelegate
         onAwaitedNavigationFinished = completion
     }
 
-    func clearAwaitedNavigation() {
-        awaitedNavigation = nil
-        onAwaitedNavigationFinished = nil
-    }
-
     override func responds(to selector: Selector!) -> Bool {
         super.responds(to: selector) || downstream?.responds(to: selector) == true
     }
@@ -51,18 +46,15 @@ private final class KioskNavigationDelegateProxy: NSObject, WKNavigationDelegate
     }
 }
 
-// The maintenance cover belongs to the UIWindow rather than a bridge view
-// controller. A strong WebKit reset replaces the entire Capacitor controller,
-// so a controller-owned cover would disappear at exactly the point it is most
-// useful. Keeping this tiny bit of presentation state outside either bridge
-// lets the new controller finish loading before the old dashboard is revealed.
+// The maintenance cover belongs to the UIWindow so it remains above the live
+// WKWebView throughout an authenticated-origin refresh. Keeping this tiny bit
+// of presentation state outside the bridge also prevents a slow navigation
+// from revealing a half-loaded dashboard.
 private final class PanelMaintenanceCoverCoordinator {
     static let shared = PanelMaintenanceCoverCoordinator()
 
     private var coverView: UIView?
     private weak var coverLabel: UILabel?
-    private(set) var isReplacingBridge = false
-
     private init() {}
 
     func show(over window: UIWindow) {
@@ -97,17 +89,11 @@ private final class PanelMaintenanceCoverCoordinator {
         }
     }
 
-    func beginBridgeReplacement(over window: UIWindow) {
-        isReplacingBridge = true
-        show(over: window)
-    }
-
     func showSlowRefresh() {
         coverLabel?.text = "Still refreshing Control Center…"
     }
 
     func dismiss() {
-        isReplacingBridge = false
         guard let cover = coverView else { return }
         coverView = nil
         coverLabel = nil
@@ -193,15 +179,6 @@ class KioskViewController: CAPBridgeViewController {
     // CF-Access headers so the first authenticated nav establishes the
     // CF_Authorization cookie. No-op when the origin is open (kioskAccess == nil).
     private func injectAccessHeadersIfNeeded() {
-        if PanelMaintenanceCoverCoordinator.shared.isReplacingBridge {
-            guard let window = view.window else { return }
-            PanelMaintenanceCoverCoordinator.shared.show(over: window)
-            armMaintenanceCoverSafetyTimer()
-            loadAuthenticatedOrigin { [weak self] in
-                self?.handleMaintenanceTransition(.authenticatedOriginFinished)
-            }
-            return
-        }
         guard kioskAccess != nil else { return }
         loadAuthenticatedOrigin()
     }
@@ -316,36 +293,8 @@ class KioskViewController: CAPBridgeViewController {
             loadAuthenticatedOrigin { [weak self] in
                 self?.handleMaintenanceTransition(.authenticatedOriginFinished)
             }
-        case .replaceCapacitorBridge:
-            showMaintenanceCover()
-            replaceCapacitorBridge()
         case .suppressedByLoopProtection:
             break
-        }
-    }
-
-    private func replaceCapacitorBridge() {
-        guard let window = view.window else {
-            loadAuthenticatedOrigin { [weak self] in
-                self?.handleMaintenanceTransition(.authenticatedOriginFinished)
-            }
-            return
-        }
-        navigationDelegateProxy?.clearAwaitedNavigation()
-        PanelMaintenanceCoverCoordinator.shared.beginBridgeReplacement(over: window)
-
-        // Build 108 proved that navigating the live Capacitor WKWebView to an
-        // inert about:blank document can terminate the entire app on the wall
-        // iPad. Replace the bridge controller instead: this creates a fresh
-        // WKWebView/WebContent process while the UIApplication, diagnostics run,
-        // Guided Access session, cookie store, and website data stay alive.
-        // Defer the swap until the notification/plugin call has unwound so the
-        // bridge that delivered the request is never torn down mid-callback.
-        DispatchQueue.main.async {
-            let replacement = KioskViewController()
-            window.rootViewController = replacement
-            window.makeKeyAndVisible()
-            PanelMaintenanceCoverCoordinator.shared.show(over: window)
         }
     }
 
