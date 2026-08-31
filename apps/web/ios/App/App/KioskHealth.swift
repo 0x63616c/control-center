@@ -135,16 +135,12 @@ enum PanelMemoryPressureRecoveryAction {
 }
 
 struct PanelMemoryPressureRecoveryPolicy {
-    let cooldownMs: Int64
     let windowMs: Int64
-    let maxRecoveriesPerWindow: Int
 
     private var recoveries: [(timestampMs: Int64, action: PanelMemoryPressureRecoveryAction)] = []
 
-    init(cooldownMs: Int64, windowMs: Int64, maxRecoveriesPerWindow: Int) {
-        self.cooldownMs = cooldownMs
+    init(windowMs: Int64) {
         self.windowMs = windowMs
-        self.maxRecoveriesPerWindow = maxRecoveriesPerWindow
     }
 
     var recoveryCount: Int {
@@ -159,15 +155,9 @@ struct PanelMemoryPressureRecoveryPolicy {
             return .suppressedByLoopProtection
         }
 
-        if let latest = recoveries.last, nowMs - latest.timestampMs < cooldownMs {
-            guard recoveries.count < maxRecoveriesPerWindow else {
-                return .suppressedByLoopProtection
-            }
+        if let latest = recoveries.last, nowMs - latest.timestampMs < windowMs {
             recoveries.append((nowMs, .stagedWebDocumentReset))
             return .stagedWebDocumentReset
-        }
-        guard recoveries.count < maxRecoveriesPerWindow else {
-            return .suppressedByLoopProtection
         }
 
         recoveries.append((nowMs, .authenticatedOriginReload))
