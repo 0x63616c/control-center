@@ -31,6 +31,11 @@ const getSnapshot = vi.fn<() => Promise<unknown>>(() =>
           trigger: "scheduled-maintenance",
           outcome: "staged-web-document-reset",
         },
+        {
+          timestampMs: 5,
+          trigger: "manual-maintenance",
+          outcome: "staged-web-document-reset",
+        },
       ],
       footprintBytes: 100,
       peakFootprintBytes: 120,
@@ -191,7 +196,7 @@ describe("startNativeDiagnostics", () => {
     const recoveryEntries = getTail()
       .slice(before)
       .filter((entry) => entry.source === "native-diagnostics" && entry.msg === "panel recovery");
-    expect(recoveryEntries).toHaveLength(2);
+    expect(recoveryEntries).toHaveLength(3);
     expect(recoveryEntries).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -209,6 +214,15 @@ describe("startNativeDiagnostics", () => {
             runId: "current",
             runOrigin: "current",
             trigger: "scheduled-maintenance",
+            outcome: "staged-web-document-reset",
+          }),
+        }),
+        expect.objectContaining({
+          level: "info",
+          data: expect.objectContaining({
+            runId: "current",
+            runOrigin: "current",
+            trigger: "manual-maintenance",
             outcome: "staged-web-document-reset",
           }),
         }),
