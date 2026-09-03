@@ -1,5 +1,6 @@
 {
   "lockfileVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "control-center",
@@ -300,7 +301,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@pulumi/pulumi": "^3.145.0",
-        "@pulumiverse/unifi": "0.2.0",
+        "@pulumiverse/unifi": "0.3.0",
       },
       "devDependencies": {
         "@types/bun": "^1.3.13",
@@ -1033,7 +1034,7 @@
 
     "@pulumi/pulumi": ["@pulumi/pulumi@3.246.0", "", { "dependencies": { "@grpc/grpc-js": "^1.10.1", "@logdna/tail-file": "^2.0.6", "@npmcli/arborist": "^9.0.0", "@opentelemetry/api": "^1.9", "@opentelemetry/exporter-trace-otlp-grpc": "^0.57", "@opentelemetry/exporter-zipkin": "^1.30", "@opentelemetry/instrumentation": "^0.57", "@opentelemetry/instrumentation-grpc": "^0.57", "@opentelemetry/resources": "^1.30", "@opentelemetry/sdk-trace-base": "^1.30", "@opentelemetry/sdk-trace-node": "^1.30", "@types/google-protobuf": "^3.15.5", "@types/semver": "^7.5.6", "@types/tmp": "^0.2.6", "execa": "^5.1.0", "fdir": "^6.5.0", "google-protobuf": "^3.21.4", "ini": "^2.0.0", "js-yaml": "^3.14.2", "minimist": "^1.2.6", "normalize-package-data": "^6.0.0", "picomatch": "^4.0.0", "require-from-string": "^2.0.1", "semver": "^7.5.2", "source-map-support": "^0.5.6", "tmp": "^0.2.4", "upath": "^1.1.0" }, "peerDependencies": { "ts-node": ">= 7.0.1 < 12", "typescript": ">= 3.8.3 < 7" }, "optionalPeers": ["ts-node", "typescript"] }, "sha512-YvUQJatWpNpVlb6ftNvbSuS2ViCNa8LoG9FiJXtG24Rx/9leYQOMSTQ61vPeNtydGh8650lBal4pTmaB+JgkPA=="],
 
-    "@pulumiverse/unifi": ["@pulumiverse/unifi@0.2.0", "", { "dependencies": { "@pulumi/pulumi": "^3.0.0" } }, "sha512-NJuYUkbjri9hwOPnyoE4qufrsUtTwZ9Ax32As47basbZIQfmg1fdJemnqfuMsSX7iRzHXiFyTVsWmkFT4/Nwdw=="],
+    "@pulumiverse/unifi": ["@pulumiverse/unifi@0.3.0", "", { "dependencies": { "@pulumi/pulumi": "^3.0.0" } }, "sha512-aA+jK5i1uFiixBwNMYhapl9+8Z5A1h38+rpPe1BRRgbZ5PNmzUMPUD9q8GeFvdEGv1qqSumQLZ9QIjpjOJwlZQ=="],
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.0-beta.27", "", {}, "sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA=="],
 
