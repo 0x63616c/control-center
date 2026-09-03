@@ -3,7 +3,7 @@ source "https://rubygems.org"
 # Upper bound: 2.236.0's upload path hands altool a file it rejects with
 # "isn't in the correct format (259)", killing every TestFlight upload. The
 # Gemfile.lock is committed so CI can't float onto a broken release again. (www-84ti)
-gem "fastlane", "~> 2.226", "< 2.236"
+gem "fastlane", "~> 2.226", "< 2.238.1"
 # fastlane 2.235+ loads its Google Play actions at startup, which `require "multi_json"`,
 # but it's no longer pulled into the bundle transitively , without this the `release` lane
 # dies with "multi_json is not part of the bundle" before any lane runs. (www-w1a4)
