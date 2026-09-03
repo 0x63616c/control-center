@@ -41,7 +41,7 @@ COPY packages/platform packages/platform
 COPY tsconfig.json ./
 RUN bun run --cwd apps/dont-text-your-ex/apps/frontend build
 
-FROM nginx:1.27-alpine AS runtime
+FROM nginx:1.29-alpine AS runtime
 
 COPY --from=build /app/apps/dont-text-your-ex/apps/frontend/dist /usr/share/nginx/html
 RUN printf 'server {\n  listen 80;\n  root /usr/share/nginx/html;\n  index index.html;\n  location = /.well-known/apple-app-site-association { default_type application/json; try_files $uri =404; }\n  location / { try_files $uri $uri/ /index.html; }\n}\n' \

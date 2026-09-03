@@ -68,7 +68,7 @@ RUN bun run --cwd apps/web build
 
 
 # Stage 2: nginx serves the static bundle and proxies /trpc to the api.
-FROM nginx:1.27-alpine AS runtime
+FROM nginx:1.29-alpine AS runtime
 
 # Remove the default nginx config and replace it with ours.
 RUN rm /etc/nginx/conf.d/default.conf
