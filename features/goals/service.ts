@@ -21,6 +21,30 @@ export type GoalInput = {
   effectiveFrom: string;
 };
 
+type Checkin = { state: "complete" | "partial" | "not_today"; value: number | null; reflection: string | null };
+type GoalFulfillment = { kind: GoalKind; target: number | null; reflectivePrompts: string[] | null };
+
+/** One source of truth for whether a persisted answer fulfilled its occurrence. */
+export function checkinFulfillsGoal(checkin: Checkin | undefined, item: GoalFulfillment): boolean {
+  if (checkin?.state !== "complete") return false;
+  if (item.kind === "measured") return (checkin.value ?? 0) >= (item.target ?? 1);
+  if (item.kind === "reflective") return Boolean(checkin.reflection?.trim()) && (item.reflectivePrompts ?? []).includes(checkin.reflection ?? "");
+  return true;
+}
+
+export function scheduleExpectedOn(day: string, schedule: ScheduleInput | null): boolean {
+  if (!schedule) return false;
+  if (schedule.kind === "daily") return true;
+  if (schedule.kind === "weekdays") return schedule.weekdays.includes(weekdayOf(day));
+  return false;
+}
+
+export function consistencyForDays(days: readonly { expected: boolean; fulfilled: boolean; vacation: boolean }[]) {
+  const expected = days.filter((day) => day.expected && !day.vacation);
+  const fulfilled = expected.filter((day) => day.fulfilled).length;
+  return { expected: expected.length, fulfilled, rate: expected.length ? fulfilled / expected.length : null };
+}
+
 function scheduleValues(input: ScheduleInput) {
   return {
     kind: input.kind,
@@ -58,6 +82,7 @@ export async function updateGoal(
   input: Omit<GoalInput, "effectiveFrom"> & { effectiveFrom: string },
 ) {
   const now = new Date();
+  if (!(await database.select({ id: goal.id }).from(goal).where(eq(goal.id, id)).limit(1)).length) return false;
   await database
     .update(goal)
     .set({
@@ -82,6 +107,7 @@ export async function updateGoal(
       target: [goalSchedule.goalId, goalSchedule.effectiveFrom],
       set: { ...scheduleValues(input.schedule) },
     });
+  return true;
 }
 
 export async function setGoalStatus(
@@ -89,7 +115,13 @@ export async function setGoalStatus(
   id: string,
   status: "active" | "paused" | "archived",
 ) {
-  await database.update(goal).set({ status, updatedAt: new Date() }).where(eq(goal.id, id));
+  const changed = await database.update(goal).set({ status, updatedAt: new Date() }).where(eq(goal.id, id)).returning({ id: goal.id });
+  return changed.length > 0;
+}
+
+export async function deleteGoal(database: Database, id: string) {
+  const deleted = await database.delete(goal).where(eq(goal.id, id)).returning({ id: goal.id });
+  return deleted.length > 0;
 }
 
 export async function saveCheckin(
@@ -139,20 +171,11 @@ function scheduleFor(day: string, schedules: (typeof goalSchedule.$inferSelect)[
   return schedules.filter((schedule) => schedule.effectiveFrom <= day).at(-1) ?? null;
 }
 
-function scheduledOn(day: string, schedule: typeof goalSchedule.$inferSelect | null): boolean {
-  if (!schedule) return false;
-  if (schedule.kind === "daily") return true;
-  if (schedule.kind === "weekdays") return schedule.weekdays?.includes(weekdayOf(day)) ?? false;
-  // Flexible weekly goals deliberately do not turn unchosen dates into misses.
-  return false;
-}
-
 function complete(
   checkin: typeof goalCheckin.$inferSelect | undefined,
   item: typeof goal.$inferSelect,
 ): boolean {
-  if (checkin?.state !== "complete") return false;
-  return item.kind !== "measured" || (checkin.value ?? 0) >= (item.target ?? 1);
+  return checkinFulfillsGoal(checkin, item);
 }
 
 function streakFor(
@@ -261,19 +284,23 @@ export async function dashboard(
       const weekStart = mondayOf(endDay);
       const weekDays = Array.from({ length: 7 }, (_, index) => shiftGoalDay(weekStart, index));
       const weeklyDone = weekDays.filter((day) => complete(itemCheckins.get(day), item)).length;
+      const monthlyDays = Array.from({ length: Number(endDay.slice(-2)) }, (_, index) => `${endDay.slice(0, 8)}${String(index + 1).padStart(2, "0")}`);
+      const summaryFor = (summaryDays: string[]) => consistencyForDays(summaryDays.map((day) => ({ expected: scheduleExpectedOn(day, scheduleFor(day, itemSchedules)), fulfilled: complete(itemCheckins.get(day), item), vacation: isVacation(day, vacations) }));
       return {
         ...item,
         schedule: todaySchedule,
         weeklyDone,
         weekTarget: todaySchedule?.kind === "weekly" ? todaySchedule.weeklyTarget : null,
         streak: streakFor(item, streakDays, itemSchedules, itemCheckins, vacations),
+        weeklyConsistency: summaryFor(weekDays),
+        monthlyConsistency: summaryFor(monthlyDays),
         days: days.map((day) => {
           const checkin = itemCheckins.get(day);
           return {
             day,
             checkin: checkin ?? null,
             vacation: isVacation(day, vacations),
-            scheduled: scheduledOn(day, scheduleFor(day, itemSchedules)),
+            scheduled: scheduleExpectedOn(day, scheduleFor(day, itemSchedules)),
             complete: complete(checkin, item),
           };
         }),
