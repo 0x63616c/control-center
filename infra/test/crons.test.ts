@@ -184,6 +184,19 @@ describe("pg-backup (NEW nightly logical backup to the NAS)", () => {
     expect(cmd).toContain("pipefail");
   });
 
+  test("validates and atomically publishes the dump without touching the final artifact first", () => {
+    const cmd = (backup()?.command ?? []).join("\n");
+
+    expect(cmd).toContain('tmp="$out.tmp"');
+    expect(cmd).toContain('rm -f "$tmp"');
+    expect(cmd).toContain("trap 'rm -f \"$tmp\"' EXIT");
+    expect(cmd).toContain('pg_dump -h control-center-postgres-rw -U postgres -d control_center | gzip -c > "$tmp"');
+    expect(cmd).toContain('gzip -t "$tmp"');
+    expect(cmd).toContain('mv "$tmp" "$out"');
+    expect(cmd).not.toContain('gzip -c > "$out"');
+    expect(cmd.indexOf('gzip -t "$tmp"')).toBeLessThan(cmd.indexOf('mv "$tmp" "$out"'));
+  });
+
   test("writes a DATED control_center-YYYYMMDD.sql.gz artifact", () => {
     const cmd = (backup()?.command ?? []).join(" ");
     // The dated filename pattern (date +%Y%m%d) and gzip compression.
@@ -314,6 +327,21 @@ describe("homeAssistantPgBackupCronSpec (Task 4)", () => {
     expect(cmd).toContain(
       `pg_dump -h ${args.serviceHost} -U ${args.owner} -d ${args.databaseName}`,
     );
+  });
+
+  test("validates and atomically publishes the dump without touching the final artifact first", () => {
+    const cmd = crons.homeAssistantPgBackupCronSpec(args).command?.join("\n") ?? "";
+
+    expect(cmd).toContain('tmp="$out.tmp"');
+    expect(cmd).toContain('rm -f "$tmp"');
+    expect(cmd).toContain("trap 'rm -f \"$tmp\"' EXIT");
+    expect(cmd).toContain(
+      `pg_dump -h ${args.serviceHost} -U ${args.owner} -d ${args.databaseName} | gzip -c > "$tmp"`,
+    );
+    expect(cmd).toContain('gzip -t "$tmp"');
+    expect(cmd).toContain('mv "$tmp" "$out"');
+    expect(cmd).not.toContain('gzip -c > "$out"');
+    expect(cmd.indexOf('gzip -t "$tmp"')).toBeLessThan(cmd.indexOf('mv "$tmp" "$out"'));
   });
 
   test("mounts the CNPG basic-auth secret and a NAS destination under home-assistant/postgres", () => {

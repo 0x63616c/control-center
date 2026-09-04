@@ -52,7 +52,25 @@ const ghcr = (name: string, digests: ImageDigests = {}): string => {
 
 const TZ = "America/Los_Angeles";
 
-function postgresBackupCommand(backup: DatabaseBackup): string[] {
+interface PostgresBackupCommandArgs {
+  authMountPath: string;
+  backupMountPath: string;
+  filenamePrefix: string;
+  dateFormat: string;
+  serviceHost: string;
+  owner: string;
+  databaseName: string;
+}
+
+function postgresBackupCommand({
+  authMountPath,
+  backupMountPath,
+  filenamePrefix,
+  dateFormat,
+  serviceHost,
+  owner,
+  databaseName,
+}: PostgresBackupCommandArgs): string[] {
   return [
     // bash, NOT sh: the image's /bin/sh is dash, which lacks `set -o pipefail`
     // (the cloudnative-pg image is Debian-based and ships bash).
@@ -65,9 +83,17 @@ function postgresBackupCommand(backup: DatabaseBackup): string[] {
       // pipefail (+ errexit) the failed dump fails the job, so a bad backup is
       // never silently "successful".
       "set -eo pipefail",
-      `export PGPASSWORD="$(cat ${backup.authMountPath}/password)"`,
-      `out="${backup.backupMountPath}/${backup.filenamePrefix}$(date +${backup.dateFormat}).sql.gz"`,
-      `pg_dump -h ${backup.serviceHost} -U ${backup.owner} -d ${backup.databaseName} | gzip -c > "$out"`,
+      `export PGPASSWORD="$(cat ${authMountPath}/password)"`,
+      `out="${backupMountPath}/${filenamePrefix}$(date +${dateFormat}).sql.gz"`,
+      'tmp="$out.tmp"',
+      'rm -f "$tmp"',
+      // The sibling temporary file keeps publication on the backup mount, so
+      // this rename atomically replaces the date-named artifact.
+      "trap 'rm -f \"$tmp\"' EXIT",
+      `pg_dump -h ${serviceHost} -U ${owner} -d ${databaseName} | gzip -c > "$tmp"`,
+      'gzip -t "$tmp"',
+      'mv "$tmp" "$out"',
+      "trap - EXIT",
       'echo "wrote $out"',
     ].join("\n"),
   ];
@@ -179,17 +205,15 @@ export function homeAssistantPgBackupCronSpec(args: {
     // Debian's dash /bin/sh) for `set -o pipefail`.
     image: "ghcr.io/cloudnative-pg/postgresql:18",
     schedule: "0 1 * * *",
-    command: [
-      "bash",
-      "-c",
-      [
-        "set -eo pipefail",
-        `export PGPASSWORD="$(cat ${authMountPath}/password)"`,
-        `out="${backupMountPath}/${databaseName}-$(date +%Y%m%d).sql.gz"`,
-        `pg_dump -h ${serviceHost} -U ${owner} -d ${databaseName} | gzip -c > "$out"`,
-        'echo "wrote $out"',
-      ].join("\n"),
-    ],
+    command: postgresBackupCommand({
+      authMountPath,
+      backupMountPath,
+      filenamePrefix: `${databaseName}-`,
+      dateFormat: "%Y%m%d",
+      serviceHost,
+      owner,
+      databaseName,
+    }),
     env: { TZ },
     extraSecretMounts: [{ secretName: authSecretName, mountPath: authMountPath }],
     volumes: [
