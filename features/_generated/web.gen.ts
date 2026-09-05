@@ -13,6 +13,7 @@ import felogsManifest from "../felogs/manifest";
 import goalsManifest from "../goals/manifest";
 import guestWifiManifest from "../guest-wifi/manifest";
 import hooksManifest from "../hooks/manifest";
+import injectionsManifest from "../injections/manifest";
 import networkManifest from "../network/manifest";
 import notifManifest from "../notif/manifest";
 import panelUpdateManifest from "../panel-update/manifest";
@@ -33,6 +34,7 @@ import { tileViews as eventsTileViews } from "../events/detail";
 import { tileViews as felogsTileViews } from "../felogs/detail";
 import { tileViews as goalsTileViews } from "../goals/detail";
 import { tileViews as guestWifiTileViews } from "../guest-wifi/detail";
+import { tileViews as injectionsTileViews } from "../injections/detail";
 import { tileViews as networkTileViews } from "../network/detail";
 import { tileViews as notifTileViews } from "../notif/detail";
 import { tileViews as scenesTileViews } from "../scenes/detail";
@@ -54,6 +56,7 @@ const manifests = [
   goalsManifest,
   guestWifiManifest,
   hooksManifest,
+  injectionsManifest,
   networkManifest,
   notifManifest,
   panelUpdateManifest,
@@ -77,6 +80,7 @@ const tileViews = [
   ...felogsTileViews,
   ...goalsTileViews,
   ...guestWifiTileViews,
+  ...injectionsTileViews,
   ...networkTileViews,
   ...notifTileViews,
   ...scenesTileViews,
