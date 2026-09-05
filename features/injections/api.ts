@@ -18,7 +18,7 @@ import {
 
 const idInput = z
   .string()
-  .regex(/^[a-z]+_[a-zA-Z0-9]+$/)
+  .regex(/^[a-z]+_[a-zA-Z0-9-]+$/)
   .max(100);
 const note = z.string().max(10000);
 const positive = z.number().finite().positive().max(10000);

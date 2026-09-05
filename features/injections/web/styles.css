@@ -408,17 +408,257 @@
 }
 
 .ij-row > button {
+  /* biome-ignore lint/complexity/noImportantStyles: The shared Button has an inline full-width default; row actions must size to content. */
   width: auto !important;
   flex: 0 0 auto;
-  padding: 0 20px !important;
 }
 .ij-row > span {
   min-width: 0;
 }
 .ij-actions > button {
+  /* biome-ignore lint/complexity/noImportantStyles: The shared Button has an inline full-width default; row actions must size to content. */
   width: auto !important;
   white-space: nowrap;
 }
 .ij-row .ij-actions {
   flex-shrink: 0;
+}
+
+/* The conversion instrument and vial share the panel palette, with medication-specific geometry. */
+.ij-course-hero {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr;
+  margin: 24px 0 18px;
+  border: 1px solid var(--hair-2);
+  border-radius: 22px;
+  overflow: hidden;
+  background: linear-gradient(120deg, color-mix(in srgb, var(--acc) 5%, var(--bg)), var(--bg) 60%);
+}
+.ij-prescription {
+  padding: 24px 28px;
+  border-right: 1px solid var(--hair-2);
+}
+.ij-prescription .ij-row {
+  margin-bottom: 22px;
+}
+.ij-date-chip {
+  font: 12px var(--mono);
+  border: 1px solid var(--hair-2);
+  padding: 6px 12px;
+  border-radius: 20px;
+  color: var(--ink-2);
+}
+.ij-conversion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ij-conversion > div {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.ij-conversion strong {
+  font: 500 42px var(--mono);
+  letter-spacing: -2px;
+  line-height: 1.1;
+}
+.ij-conversion span:not(.ij-equals) {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.ij-conversion .ij-active-dose strong {
+  color: var(--acc);
+}
+.ij-equals {
+  font: 18px var(--mono);
+  color: var(--ink-2);
+}
+.ij-syringe-scale {
+  width: 100%;
+  height: 35px;
+  margin: 22px 0 10px;
+}
+.ij-hero-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.ij-prescription .ij-hero-foot {
+  justify-content: flex-start;
+}
+.ij-status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--acc);
+}
+.ij-residual {
+  padding: 24px 26px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  border-right: 1px solid var(--hair-2);
+}
+.ij-residual-number {
+  font: 500 48px var(--mono);
+  letter-spacing: -2px;
+  margin-top: 18px;
+}
+.ij-residual-number span {
+  font: 14px var(--ui);
+  color: var(--ink-2);
+  letter-spacing: 0;
+  margin-left: 8px;
+}
+.ij-residual svg {
+  width: 100%;
+  height: 65px;
+  margin: 0 0 8px;
+}
+.ij-vial-card {
+  padding: 24px;
+  display: grid;
+  grid-template-columns: 1fr 80px;
+  column-gap: 15px;
+  align-items: center;
+}
+.ij-vial-number {
+  font: 500 44px var(--mono);
+  letter-spacing: -2px;
+  margin-top: 17px;
+}
+.ij-vial-number span {
+  font: 20px var(--ui);
+  color: var(--ink-2);
+  margin-left: 4px;
+}
+.ij .ij-vial-volume {
+  font: 16px var(--mono);
+  margin-top: 15px;
+}
+.ij-vial-volume small {
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.ij-vial-object {
+  width: 80px;
+  height: 146px;
+}
+.ij-vial-meta {
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--ink-2);
+  margin-top: 8px;
+}
+.ij-weight-ribbon {
+  grid-column: 1 / -1;
+  border-top: 1px solid var(--hair-2);
+  padding: 16px 28px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  background: color-mix(in srgb, var(--ink) 2%, transparent);
+}
+.ij-weight-ribbon > strong {
+  font: 500 25px var(--mono);
+  letter-spacing: -1px;
+}
+.ij-weight-ribbon small {
+  font: 12px var(--ui);
+  color: var(--ink-2);
+  margin-left: 6px;
+}
+.ij-weight-change {
+  color: #d6aa65;
+  font: 14px var(--mono);
+}
+.ij-weight-range {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  font: 11px var(--mono);
+  color: var(--ink-2);
+}
+.ij-weight-track {
+  width: 120px;
+  height: 3px;
+  background: var(--hair-2);
+  position: relative;
+  border-radius: 4px;
+}
+.ij-weight-track i {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to right, transparent, #d6aa65);
+}
+.ij-weight-track:after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: -3px;
+  background: #d6aa65;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.ij .ij-pill {
+  border-radius: 10px;
+  padding: 11px 15px;
+  min-width: 55px;
+}
+.ij .ij-pill[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--acc) 12%, var(--bg));
+  color: var(--acc);
+  border-color: color-mix(in srgb, var(--acc) 40%, transparent);
+}
+.ij-inspector {
+  background: linear-gradient(160deg, color-mix(in srgb, var(--acc) 4%, var(--bg)), var(--bg) 50%);
+  border-top: 2px solid var(--acc);
+}
+.ij-chart {
+  background: linear-gradient(165deg, color-mix(in srgb, var(--acc) 2%, var(--bg)), var(--bg) 55%);
+}
+.ij-day.selected {
+  background: color-mix(in srgb, var(--acc) 10%, var(--bg));
+}
+@media (max-width: 1050px) {
+  .ij-course-hero {
+    grid-template-columns: 1.5fr 1fr;
+  }
+  .ij-prescription {
+    grid-column: 1 / -1;
+    border-right: 0;
+    border-bottom: 1px solid var(--hair-2);
+  }
+  .ij-weight-ribbon {
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+  .ij-weight-range {
+    display: none;
+  }
+}
+@media (max-width: 600px) {
+  .ij-conversion strong {
+    font-size: 32px;
+  }
+  .ij-prescription {
+    padding: 20px;
+  }
+  .ij-residual,
+  .ij-vial-card {
+    padding: 18px;
+  }
+  .ij-vial-card {
+    grid-template-columns: 1fr 50px;
+  }
+  .ij-vial-object {
+    width: 50px;
+  }
 }

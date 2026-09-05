@@ -10,7 +10,7 @@ import { POSES } from "./model";
 import { injectionCourse, injectionPhoto } from "./schema";
 
 const metaInput = z.object({
-  courseId: z.string().regex(/^icr_[a-zA-Z0-9]+$/),
+  courseId: z.string().regex(/^icr_[a-zA-Z0-9-]+$/),
   at: z.iso.datetime({ offset: true }),
   pose: z.enum(POSES),
   notes: z.string().max(10000),
@@ -26,7 +26,7 @@ export const routes = defineHttp([
     handler: async (req) => {
       let meta: unknown;
       try {
-        meta = JSON.parse(req.headers.get("x-photo-meta") ?? "null");
+        meta = JSON.parse(decodeURIComponent(req.headers.get("x-photo-meta") ?? "null"));
       } catch {
         return new Response("Invalid photo metadata", { status: 400 });
       }
@@ -75,7 +75,7 @@ export const routes = defineHttp([
     match: "prefix",
     handler: async (_req, url) => {
       const id = url.pathname.slice("/media/progress-photos/".length);
-      if (!/^iph_[a-zA-Z0-9]+$/.test(id)) return new Response("Not found", { status: 404 });
+      if (!/^iph_[a-zA-Z0-9-]+$/.test(id)) return new Response("Not found", { status: 404 });
       const [row] = await db
         .select({ id: injectionPhoto.id })
         .from(injectionPhoto)

@@ -14,7 +14,6 @@ import {
   plannedInjections,
   RANGES,
   type RecordSet,
-  remaining,
   type Settings,
   scenario,
   UNITS,
@@ -23,16 +22,10 @@ import {
   weightStats,
   zonedTime,
 } from "./model";
+import { CourseHero } from "./web/CourseHero";
 import { CheckInForm, CourseForm, ErrorMessage, InjectionForm, VialForm } from "./web/Forms";
 import { Photos } from "./web/Photos";
-import {
-  Calendar,
-  dateLabel,
-  Inspector,
-  number,
-  ScenarioComparison,
-  Timeline,
-} from "./web/Timeline";
+import { Calendar, Inspector, number, ScenarioComparison, Timeline } from "./web/Timeline";
 import "./web/styles.css";
 
 type Screen =
@@ -68,19 +61,10 @@ export function TrackerView({
   const actual = doses(data),
     plan = plannedInjections(c),
     today = dayAt(now, c.timezone);
-  const next = plan.find(
-    (p) =>
-      dayAt(p.at, c.timezone) >= today &&
-      !actual.some((i) => i.plannedAt && Date.parse(i.plannedAt) === Date.parse(p.at)),
-  );
-  const last = actual.filter((i) => Date.parse(i.at) <= now).at(-1),
-    vial = data.vials.find((v) => !v.retired) ?? data.vials.at(-1),
-    stats = c.status === "scenario" ? null : weightStats(weights, c, now);
+  const stats = c.status === "scenario" ? null : weightStats(weights, c, now);
   const week = courseWeek(c, now),
     actualWeek = actual.filter((i) => courseWeek(c, Date.parse(i.at)) === week),
     plannedWeek = plan.filter((i) => i.week === week);
-  const estimated = remaining(actual, now, c.halfLifeDays),
-    used = vial ? usedVolume(vial, data.injections, now) : 0;
   return (
     <>
       <div className="ij-row">
@@ -107,46 +91,7 @@ export function TrackerView({
           )}
         </div>
       </div>
-      <div className="ij-stats">
-        <Stat
-          label={
-            next && dayAt(next.at, c.timezone) === today ? "DOSE PLANNED TODAY" : "NEXT PLANNED"
-          }
-          value={next ? `${number(next.units)} units` : "No upcoming plan"}
-          detail={
-            next
-              ? `${dateLabel(next.at, c.timezone)} · ${number(next.mg)} mg`
-              : "Edit your schedule"
-          }
-        />
-        <Stat
-          label="ESTIMATED REMAINING"
-          value={c.status === "scenario" ? "Scenario" : `${number(estimated)} mg`}
-          detail={
-            last
-              ? `Last: ${dateLabel(last.at, c.timezone)} · ${last.units} units`
-              : "No actual injections recorded"
-          }
-        />
-        <Stat
-          label="CURRENT VIAL"
-          value={vial ? `${number((1 - used / vial.volume) * 100, 0)}%` : "No vial"}
-          detail={
-            vial
-              ? `${number(vial.volume - used)} mL · ${number((vial.volume - used) * vial.concentration)} mg left`
-              : "Add a vial"
-          }
-        />
-        <Stat
-          label="LATEST COURSE WEIGHT"
-          value={stats ? `${number(stats.last.kg * LB_PER_KG, 1)} lb` : "No reading"}
-          detail={
-            stats
-              ? `${number(stats.change * LB_PER_KG, 1)} lb · ${number(stats.percent, 1)}% since first reading`
-              : "Uses your existing weight history"
-          }
-        />
-      </div>
+      <CourseHero data={data} weights={weights} now={now} />
       {c.status !== "scenario" && (
         <div className="ij-row ij-muted">
           <span>
@@ -275,16 +220,6 @@ export function TrackerView({
     </>
   );
 }
-function Stat({ label, value, detail }: { label: string; value: string; detail: string }) {
-  return (
-    <div className="ij-stat">
-      <span className="ij-eyebrow">{label}</span>
-      <strong>{value}</strong>
-      <small>{detail}</small>
-    </div>
-  );
-}
-
 function CoursePage({
   course,
   defaults,

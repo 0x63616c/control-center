@@ -342,13 +342,15 @@ function Capture({
         method: "POST",
         headers: {
           "Content-Type": "image/jpeg",
-          "x-photo-meta": JSON.stringify({
-            courseId: data.course.id,
-            at: preview.at,
-            pose,
-            notes,
-            weightId: weightId || null,
-          }),
+          "x-photo-meta": encodeURIComponent(
+            JSON.stringify({
+              courseId: data.course.id,
+              at: preview.at,
+              pose,
+              notes,
+              weightId: weightId || null,
+            }),
+          ),
         },
         body: preview.blob,
       });
