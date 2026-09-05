@@ -2,6 +2,7 @@ import { Tile, TileHeader } from "@/components/ui";
 import { useNow } from "@/lib/hooks";
 import { trpc } from "@/lib/trpc";
 import {
+  addDays,
   courseWeek,
   dayAt,
   doses,
@@ -10,6 +11,8 @@ import {
   type RecordSet,
   remaining,
   usedVolume,
+  weightStats,
+  zonedTime,
 } from "./model";
 import { dateLabel, number } from "./web/Timeline";
 
@@ -97,14 +100,23 @@ export function InjectionTile() {
     { courseId: course?.id ?? "icr_none" },
     { enabled: !!course, refetchInterval: 60000 },
   );
-  const weight = trpc.weight.summary.useQuery(
-    { range: "all", tz: course?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone },
-    { enabled: !!course, refetchInterval: 60000 },
+  const timezone = course?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const weight = trpc.weight.timeline.useQuery(
+    {
+      from: new Date(
+        zonedTime(course?.startDate ?? dayAt(Date.now(), timezone), "00:00", timezone),
+      ).toISOString(),
+      to: new Date(
+        zonedTime(addDays(dayAt(Date.now(), timezone), 1), "00:00", timezone),
+      ).toISOString(),
+    },
+    {
+      enabled: !!course && course.startDate <= dayAt(Date.now(), timezone),
+      refetchInterval: 60000,
+    },
   );
   const now = useNow(),
-    days = weight.data?.daily.filter((d) => course && d.day >= course.startDate),
-    first = days?.[0],
-    last = days?.at(-1);
+    stats = course ? weightStats(weight.data ?? [], course, now.getTime()) : null;
   if (courses.error || detail.error)
     return (
       <Tile padding={22}>
@@ -116,7 +128,7 @@ export function InjectionTile() {
     <InjectionTileView
       data={detail.data}
       now={now.getTime()}
-      weight={first && last ? { kg: last.kg, change: last.kg - first.kg } : undefined}
+      weight={stats ? { kg: stats.last.kg, change: stats.change } : undefined}
     />
   );
 }

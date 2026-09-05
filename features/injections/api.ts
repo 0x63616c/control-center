@@ -80,18 +80,44 @@ export const api = defineApi(
             .where(and(eq(injectionPhoto.courseId, c.id), isNull(injectionPhoto.deletedAt)))
             .orderBy(injectionPhoto.at),
         ]);
-        return { course: { ...c.config, id: c.id }, vials, injections, checkIns, photos };
+        return {
+          course: { ...c.config, id: c.id },
+          vials,
+          injections: injections.map((i) => ({
+            ...i,
+            at: new Date(i.at).toISOString(),
+            plannedAt: i.plannedAt ? new Date(i.plannedAt).toISOString() : null,
+          })),
+          checkIns,
+          photos: photos.map((p) => ({ ...p, at: new Date(p.at).toISOString() })),
+        };
       }),
       saveCourse: publicProcedure
         .input(z.object({ id: idInput.optional(), config: courseInput }))
         .mutation(async ({ input }) => {
           const id = input.id ?? genId("icr");
           if (input.id) {
-            await courseExists(id);
-            await db
-              .update(injectionCourse)
-              .set({ config: input.config, updatedAt: new Date() })
-              .where(eq(injectionCourse.id, id));
+            await db.transaction(async (tx) => {
+              const [existing] = await tx
+                .select()
+                .from(injectionCourse)
+                .where(eq(injectionCourse.id, id))
+                .for("update");
+              if (!existing) fail("Course not found");
+              if (input.config.status === "scenario") {
+                const records = await tx
+                  .select({ id: actualInjection.id })
+                  .from(actualInjection)
+                  .where(and(eq(actualInjection.courseId, id), isNull(actualInjection.deletedAt)))
+                  .limit(1);
+                if (records.length)
+                  fail("A course with actual injections cannot become a scenario");
+              }
+              await tx
+                .update(injectionCourse)
+                .set({ config: input.config, updatedAt: new Date() })
+                .where(eq(injectionCourse.id, id));
+            });
           } else
             await db.transaction(async (tx) => {
               await tx.insert(injectionCourse).values({ id, config: input.config });
@@ -147,19 +173,19 @@ export const api = defineApi(
         return { id };
       }),
       saveInjection: publicProcedure.input(injectionInput).mutation(async ({ input }) => {
-        const c = await courseExists(input.courseId);
-        if (c.config.status === "scenario")
-          fail("Scenarios contain planned events only. Create a real course to log injections.");
         if (Date.parse(input.at) > Date.now() + 60_000)
           fail("Actual injections cannot be in the future");
         const id = input.id ?? genId("inj");
         await db.transaction(async (tx) => {
           // Serialize all draws/edits in the course, then lock the vial shared with vial edits.
-          await tx
+          const [c] = await tx
             .select()
             .from(injectionCourse)
             .where(eq(injectionCourse.id, input.courseId))
             .for("update");
+          if (!c) fail("Course not found");
+          if (c.config.status === "scenario")
+            fail("Scenarios contain planned events only. Create a real course to log injections.");
           if (input.id) {
             const [old] = await tx
               .select()

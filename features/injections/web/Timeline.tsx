@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { Slider } from "@/components/ui/Slider";
 import {
   addDays,
   courseWeek,
@@ -18,7 +19,10 @@ import {
 } from "../model";
 
 export function number(value: number | null | undefined, digits = 2): string {
-  return value == null ? "—" : value.toFixed(digits).replace(/\.00$/, "");
+  if (value == null) return "—";
+  if (value !== 0 && Math.abs(value) < 10 ** -digits)
+    return Number(value.toPrecision(3)).toString();
+  return value.toFixed(digits).replace(/\.00$/, "");
 }
 export function dateLabel(at: string | number, tz: string): string {
   return new Date(at).toLocaleDateString("en-US", { timeZone: tz, month: "short", day: "numeric" });
@@ -256,15 +260,19 @@ export function Timeline({
         <line x1={cursor} x2={cursor} y1="30" y2="454" stroke="var(--ink)" strokeWidth="1.5" />
         <circle cx={cursor} cy="454" r="5" fill="var(--ink)" />
       </svg>
-      <input
-        aria-label="Selected timeline date"
-        type="range"
-        min={left}
-        max={right}
-        step={3600000}
-        value={Math.min(right, Math.max(left, selected))}
-        onChange={(e) => onSelect(Number(e.target.value))}
-      />
+      <div className="ij-scrub">
+        <Slider
+          label="Selected timeline date"
+          min={left}
+          max={right}
+          step={3600000}
+          value={Math.min(right, Math.max(left, selected))}
+          onChange={onSelect}
+          format={(at) => new Date(at).toLocaleString("en-US", { timeZone: c.timezone })}
+          showHeader={false}
+          size="scrub"
+        />
+      </div>
     </section>
   );
 }
@@ -573,15 +581,19 @@ export function ScenarioComparison({ timezone }: { timezone: string }) {
           </text>
         ))}
       </svg>
-      <input
-        type="range"
-        aria-label="Comparison day"
-        min="0"
-        max="84"
-        step="0.25"
-        value={at}
-        onChange={(e) => setAt(Number(e.target.value))}
-      />
+      <div className="ij-scrub">
+        <Slider
+          label="Comparison day"
+          min={0}
+          max={84}
+          step={0.25}
+          value={at}
+          onChange={setAt}
+          format={(v) => `Day ${v}`}
+          showHeader={false}
+          size="scrub"
+        />
+      </div>
       <div className="ij-row">
         <strong>Day {number(at, 1)}</strong>
         <span>2024: {number(remaining(old, at * DAY, 7))} mg remaining</span>

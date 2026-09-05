@@ -204,7 +204,8 @@
   margin-bottom: 16px;
   font-size: 14px;
 }
-.ij-field > span {
+.ij-field > span,
+.ij-field > label {
   color: var(--ink-2);
 }
 .ij input:not([type="checkbox"]):not([type="range"]),
@@ -218,11 +219,6 @@
   min-height: 48px;
   padding: 12px;
   font: 16px var(--ui);
-}
-.ij input[type="range"] {
-  width: 100%;
-  min-height: 44px;
-  accent-color: var(--acc);
 }
 .ij input[type="checkbox"] {
   width: 22px;
@@ -661,4 +657,8 @@
   .ij-vial-object {
     width: 50px;
   }
+}
+
+.ij-scrub {
+  padding: 20px 0;
 }

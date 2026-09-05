@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { cloneElement, type ReactElement, type ReactNode, useId, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { trpc } from "@/lib/trpc";
 import {
@@ -16,13 +16,19 @@ import {
 } from "../model";
 import { number } from "./Timeline";
 
-export function Field({ label, children }: { label: string; children: ReactNode }) {
+export function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactElement<{ id?: string }>;
+}) {
+  const id = useId();
   return (
-    // biome-ignore lint/a11y/noLabelWithoutControl: Field always wraps its input child.
-    <label className="ij-field">
-      <span>{label}</span>
-      {children}
-    </label>
+    <div className="ij-field">
+      <label htmlFor={id}>{label}</label>
+      {cloneElement(children, { id })}
+    </div>
   );
 }
 export function ErrorMessage({ error }: { error: unknown }) {

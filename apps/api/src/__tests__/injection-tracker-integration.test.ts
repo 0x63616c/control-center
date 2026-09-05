@@ -45,6 +45,10 @@ it.skipIf(!testUrl)(
     });
     let data = await a.detail({ courseId: c.id });
     expect(usedVolume(vial, data.injections)).toBeCloseTo(0.08);
+    expect(data.injections[0]?.at).toBe("2026-09-04T21:00:00.000Z");
+    await expect(
+      a.saveCourse({ id: c.id, config: { ...data.course, status: "scenario" } }),
+    ).rejects.toThrow("cannot become a scenario");
     expect(data.course.stages).toEqual(initial.course.stages);
     const concurrent = await Promise.allSettled(
       [1, 2].map(() =>

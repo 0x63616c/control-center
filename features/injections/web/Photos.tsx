@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { Slider } from "@/components/ui/Slider";
 import { trpc } from "@/lib/trpc";
 import { type Photo, POSES, type RecordSet, type Weight } from "../model";
 import { ErrorMessage, Field } from "./Forms";
@@ -156,15 +157,17 @@ export function Photos({
                 />
               </div>
               {mode !== "side" && (
-                <Field label={mode === "slider" ? "Reveal after photo" : "After photo opacity"}>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
+                <div className="ij-scrub">
+                  <Slider
+                    label={mode === "slider" ? "Reveal after photo" : "After photo opacity"}
+                    min={0}
+                    max={100}
                     value={opacity}
-                    onChange={(e) => setOpacity(Number(e.target.value))}
+                    onChange={setOpacity}
+                    format={(v) => `${v}%`}
+                    size="scrub"
                   />
-                </Field>
+                </div>
               )}
               <div className="ij-row">
                 <span>{caption(first)}</span>
@@ -354,7 +357,7 @@ function Capture({
         },
         body: preview.blob,
       });
-      if (!response.ok)
+      if (response.status !== 201)
         throw new Error(
           `Photo upload failed (${response.status}). Your capture is still here; try again.`,
         );
@@ -419,15 +422,17 @@ function Capture({
             ))}
           </select>
         </Field>
-        <Field label="Reference ghost opacity">
-          <input
-            type="range"
-            min="0"
-            max="70"
+        <div className="ij-scrub">
+          <Slider
+            label="Reference ghost opacity"
+            min={0}
+            max={70}
             value={ghost}
-            onChange={(e) => setGhost(Number(e.target.value))}
+            onChange={setGhost}
+            format={(v) => `${v}%`}
+            size="scrub"
           />
-        </Field>
+        </div>
         <Field label="Associated weight">
           <select value={weightId} onChange={(e) => setWeightId(e.target.value)}>
             <option value="">No weight linked</option>

@@ -241,7 +241,7 @@ function CoursePage({
       from: new Date(zonedTime(course.startDate, "00:00", course.timezone)).toISOString(),
       to: new Date(
         Math.max(
-          Date.now() + DAY,
+          zonedTime(addDays(dayAt(Date.now(), course.timezone), 1), "00:00", course.timezone),
           zonedTime(
             addDays(course.startDate, Math.max(...course.stages.map((s) => s.endWeek)) * 7 + 1),
             "00:00",
