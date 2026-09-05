@@ -13,6 +13,18 @@ import { z } from "zod";
 import * as service from "./service";
 
 export const weightRouter = router({
+  timeline: publicProcedure
+    .input(
+      z
+        .object({ from: z.iso.datetime({ offset: true }), to: z.iso.datetime({ offset: true }) })
+        .refine(
+          (v) =>
+            Date.parse(v.to) > Date.parse(v.from) &&
+            Date.parse(v.to) - Date.parse(v.from) <= 20 * 366 * 86400000,
+          "Invalid timeline range",
+        ),
+    )
+    .query(({ input }) => service.getTimeline(input.from, input.to)),
   // Daily-median series + window stats for the tile and Trend page. Null until
   // the first included reading exists (day-one skeleton).
   summary: publicProcedure

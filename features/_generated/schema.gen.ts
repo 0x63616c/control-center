@@ -11,6 +11,7 @@ export * from "../felogs/schema";
 export * from "../goals/schema";
 export * from "../guest-wifi/schema";
 export * from "../hooks/schema";
+export * from "../injections/schema";
 export * from "../notif/schema";
 export * from "../panel-update/schema";
 export * from "../scenes/schema";

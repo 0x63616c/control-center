@@ -112,7 +112,7 @@ export function Slider({
       disabled={disabled}
       aria-label={label}
       aria-orientation={vertical ? "vertical" : undefined}
-      aria-valuetext={stops?.[activeStop]}
+      aria-valuetext={stops?.[activeStop] ?? format(value)}
       data-testid={testId}
       onChange={(e) => onChange(Number(e.target.value))}
       // Adjusting the slider must never double as a tap on the surface behind

@@ -416,3 +416,24 @@ export async function deleteReading(id: string): Promise<boolean> {
     .returning({ id: weightMeasurement.id });
   return deleted != null;
 }
+
+/** Canonical included measurements for cross-feature timelines; manual edits apply here too. */
+export async function getTimeline(from: string, to: string) {
+  const rows = await db
+    .select({
+      id: weightMeasurement.id,
+      at: weightMeasurement.measuredAt,
+      kg: metricExpr("weight_kg"),
+    })
+    .from(weightMeasurement)
+    .where(
+      and(
+        notDeleted(),
+        isNull(weightMeasurement.excludedReason),
+        gte(weightMeasurement.measuredAt, new Date(from)),
+        lt(weightMeasurement.measuredAt, new Date(to)),
+      ),
+    )
+    .orderBy(weightMeasurement.measuredAt);
+  return rows.map((row) => ({ ...row, at: row.at.toISOString() }));
+}

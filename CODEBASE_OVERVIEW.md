@@ -397,6 +397,13 @@ the default, so tests inject the in-memory adapter instead of stubbing drizzle.
   blocks hand-rolled ids outside `packages/platform/src/index.ts`.
 - Deployment and operations changes should update docs in the same change.
 
+## Injection tracking
+
+`features/injections/` owns the medication course tracker, staged plans, actual
+injections, vial accounting, synchronized timeline, check-ins and guided progress
+photos. It reads canonical included measurements through `weight.timeline`.
+See `features/injections/README.md` for calculation, scenario and media boundaries.
+
 ## Where To Start For A Feature
 
 Adding a whole new tile/feature follows ADR-0001/0002: create `features/<id>/`
