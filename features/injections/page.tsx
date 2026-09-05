@@ -373,7 +373,7 @@ function CoursePage({
     </>
   );
 }
-export function InjectionPage() {
+function InjectionPage() {
   const query = trpc.injections.list.useQuery();
   const [selected, setSelected] = useState<string | null>(null),
     [create, setCreate] = useState(false),

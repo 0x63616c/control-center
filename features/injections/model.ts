@@ -6,9 +6,9 @@ export const UNITS = ["units", "mg", "mL"] as const;
 export const RANGES = ["4W", "12W", "Course", "All"] as const;
 export const POSES = ["front", "side", "back", "custom"] as const;
 export const dateInput = z.iso.date();
-export const timeInput = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+const timeInput = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 const positive = z.number().finite().positive().max(10000);
-export const stageInput = z
+const stageInput = z
   .object({
     startWeek: z.number().int().min(1).max(520),
     endWeek: z.number().int().min(1).max(520),
@@ -89,7 +89,7 @@ export type Injection = {
   notes: string;
   plannedAt: string | null;
 };
-export type CheckIn = {
+type CheckIn = {
   id: string;
   courseId: string;
   date: string;
@@ -145,7 +145,7 @@ export function dayAt(at: string | number, timezone: string): string {
 export function addDays(day: string, n: number): string {
   return new Date(Date.parse(`${day}T12:00:00Z`) + n * DAY).toISOString().slice(0, 10);
 }
-export function dayNumber(day: string): number {
+function dayNumber(day: string): number {
   return Date.parse(`${day}T00:00:00Z`) / DAY;
 }
 // Resolve wall-clock recurrence in the course's zone, preserving local time across DST.

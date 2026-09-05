@@ -406,3 +406,19 @@
     font-size: 23px;
   }
 }
+
+.ij-row > button {
+  width: auto !important;
+  flex: 0 0 auto;
+  padding: 0 20px !important;
+}
+.ij-row > span {
+  min-width: 0;
+}
+.ij-actions > button {
+  width: auto !important;
+  white-space: nowrap;
+}
+.ij-row .ij-actions {
+  flex-shrink: 0;
+}
