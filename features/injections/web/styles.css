@@ -662,3 +662,97 @@
 .ij-scrub {
   padding: 20px 0;
 }
+
+.ij-top {
+  margin: 8px 0 18px;
+}
+.ij-top h1 {
+  margin: 8px 0 0;
+}
+.ij-simple-summary {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr 1fr;
+  gap: 24px;
+  align-items: center;
+  padding: 12px 0 24px;
+  border-bottom: 1px solid var(--hair);
+}
+.ij-simple-summary > div {
+  display: grid;
+  gap: 10px;
+}
+.ij-simple-summary strong {
+  font-size: 23px;
+  font-weight: 500;
+}
+.ij-big-number {
+  font: 500 58px var(--mono);
+  letter-spacing: -4px;
+  color: var(--acc);
+}
+.ij-big-number small {
+  font: 18px var(--ui);
+  margin-left: 10px;
+  color: var(--ink-2);
+  letter-spacing: 0;
+}
+.ij-progress {
+  padding-top: 28px;
+}
+.ij-progress h2,
+.ij-recent h2 {
+  margin: 0;
+}
+.ij-graph-caption {
+  margin: 14px 0 6px;
+}
+.ij-recent {
+  margin: 32px 0;
+}
+.ij-log-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 0;
+  background: none;
+  color: var(--ink);
+  border: 0;
+  border-bottom: 1px solid var(--hair);
+  font: 16px var(--ui);
+  text-align: left;
+  cursor: pointer;
+}
+.ij-log-row small {
+  font-weight: 400;
+  color: var(--ink-2);
+}
+.ij-more {
+  margin: 20px 0;
+}
+.ij-more > summary {
+  min-height: 44px;
+  padding: 12px 0;
+  color: var(--ink-2);
+  cursor: pointer;
+  font-size: 15px;
+}
+.ij-start {
+  max-width: 740px;
+  margin: 44px auto;
+}
+.ij-start > p {
+  color: var(--ink-2);
+  font-size: 18px;
+  line-height: 1.6;
+}
+.ij-start form {
+  margin-top: 36px;
+}
+
+.ij-progress svg {
+  max-height: 430px;
+}
+.ij-progress .ij-actions {
+  margin: 0;
+}

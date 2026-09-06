@@ -61,3 +61,19 @@ The existing push-to-main deployment publishes web/API/worker images. The iPad
 shell loads `https://app.worldwidewebb.co`, so this feature requires no native
 binary update. Actual camera framing still depends on physical iPad position;
 there is no automatic body recognition or dosing recommendation engine.
+
+## Everyday view
+
+The tracker opens on estimated medication remaining, last dose, synced weight and
+next scheduled dose. The main graph separates recorded-dose estimates from a
+forecast combining those records with only future, unlinked scheduled events.
+Past unlogged plans never become assumed doses. Weight is the canonical Weight
+tile data, including corrections, with up to 24 weeks of pre-course context;
+course change statistics retain the first included course reading as the baseline.
+
+With no active course, a short setup confirms formulation and start date, shows
+the saved weekly schedule, then opens dose logging. Scenarios no longer become the
+landing page. Logging defaults to now/current vial; time, plan linkage and notes
+are secondary. Existing independent records retain their null plan link on edit.
+Recent doses are directly editable. Schedule, vial, calendar, photos and scenario
+tools remain under collapsed sections; no prior records are removed.

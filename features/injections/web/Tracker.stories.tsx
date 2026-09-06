@@ -79,9 +79,12 @@ type Story = StoryObj<typeof meta>;
 export const Timeline: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByRole("heading", { name: course.name })).toBeVisible();
-    await userEvent.click(canvas.getByRole("button", { name: "mg", exact: true }));
-    await expect(canvas.getByLabelText("Selected timeline date")).toBeVisible();
+    await expect(canvas.getByRole("heading", { name: "Your progress" })).toBeVisible();
+    await expect(canvas.getByRole("button", { name: "Log dose", exact: true })).toBeVisible();
+    await expect(canvas.getByText("Estimated in your body now")).toBeVisible();
+    await userEvent.click(canvas.getByRole("button", { name: "12 weeks each side", exact: true }));
+    await expect(canvas.getByRole("slider", { name: "Selected timeline date" })).toBeVisible();
+    await userEvent.click(canvas.getByRole("button", { name: "4 weeks each side", exact: true }));
   },
 };
 export const CalendarView: Story = {
