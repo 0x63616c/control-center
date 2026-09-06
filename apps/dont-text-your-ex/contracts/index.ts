@@ -15,6 +15,10 @@ export const RescueInterventionIdSchema = z
   .string()
   .regex(/^rsi_[a-f0-9]{32}$/, "invalid RescueInterventionId")
   .brand<"RescueInterventionId">();
+export const AccountDeletionIdSchema = z
+  .string()
+  .regex(/^del_[a-f0-9]{32}$/, "invalid AccountDeletionId")
+  .brand<"AccountDeletionId">();
 export const SessionTokenSchema = idSchema("sess", "SessionToken");
 const ActivityIdSchema = idSchema("act", "ActivityId");
 export const EvidenceIdSchema = idSchema("evi", "EvidenceId");
@@ -23,7 +27,12 @@ export type UserId = z.infer<typeof UserIdSchema>;
 export type JarId = z.infer<typeof JarIdSchema>;
 export type ReportId = z.infer<typeof ReportIdSchema>;
 export type RescueInterventionId = z.infer<typeof RescueInterventionIdSchema>;
+export type AccountDeletionId = z.infer<typeof AccountDeletionIdSchema>;
 export type SessionToken = z.infer<typeof SessionTokenSchema>;
+
+export function accountMutationLockKey(userId: UserId): string {
+  return `dont-text-your-ex/account/${userId}`;
+}
 
 export const InviteCodeSchema = z
   .string()
@@ -45,10 +54,29 @@ export const AuthDevRequestSchema = z
 export const AppleAuthRequestSchema = z
   .object({
     identityToken: nonEmptyText,
+    authorizationCode: nonEmptyText,
     nonce: z.string().regex(/^nonce_[a-f0-9]{48}$/),
     fullName: z.string().optional(),
   })
   .strict();
+
+export const DeleteAccountRequestSchema = z.union([
+  z.object({ confirmed: z.literal(true) }).strict(),
+  z
+    .object({
+      confirmed: z.literal(true),
+      authorizationCode: nonEmptyText,
+      identityToken: nonEmptyText,
+      nonce: z.string().regex(/^nonce_[a-f0-9]{48}$/),
+    })
+    .strict(),
+]);
+export type DeleteAccountRequest = z.infer<typeof DeleteAccountRequestSchema>;
+
+export const AccountDeletionWorkflowInputSchema = z
+  .object({ schemaVersion: z.literal(1), deletionRequestId: AccountDeletionIdSchema })
+  .strict();
+export type AccountDeletionWorkflowInput = z.infer<typeof AccountDeletionWorkflowInputSchema>;
 
 export const CreateJarRequestSchema = z
   .object({
@@ -426,6 +454,12 @@ export const AuthResponseSchema = z.discriminatedUnion("status", [
     .object({ status: z.literal("needs_profile"), token: SessionTokenSchema, user: MeSchema })
     .strict(),
 ]);
+export const DeleteAccountResponseSchema = z
+  .object({
+    status: z.literal("accepted"),
+    deletionRequestId: AccountDeletionIdSchema,
+  })
+  .strict();
 export const OkResponseSchema = z.object({ ok: z.literal(true) }).strict();
 export const JoinJarResponseSchema = z.object({ jarId: JarIdSchema }).strict();
 export const InviteRateLimitErrorSchema = z

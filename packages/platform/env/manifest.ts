@@ -126,6 +126,18 @@ export const ENV = defineEnv({
   APNS_HOST: url().default("https://api.push.apple.com").forRuntime("worker").forFeatures("notif"),
   PUSH_TOKEN_KEYRING: secret().optionalSecret().forRuntime("api", "temporal-worker"),
 
+  // ── Don't Text Your Ex account deletion / Sign in with Apple ─────────────
+  SIWA_KEY_ID: secret().optionalSecret().forRuntime("temporal-worker"),
+  SIWA_TEAM_ID: secret().optionalSecret().forRuntime("temporal-worker"),
+  SIWA_KEY_CONTENT: secret().optionalSecret().forRuntime("temporal-worker"),
+  APPLE_BUNDLE_ID: str()
+    .default("co.worldwidewebb.textyourex")
+    .forRuntime("api", "temporal-worker"),
+  ACCOUNT_DELETION_KEYRING: secret().optionalSecret().forRuntime("api", "temporal-worker"),
+  RESTORE_TOMBSTONE_HMAC_KEYRING: secret().optionalSecret().forRuntime("api", "temporal-worker"),
+  RESTORE_TOMBSTONE_SIGNING_KEYRING: secret().optionalSecret().forRuntime("api", "temporal-worker"),
+  ERASURE_JOURNAL_DIR: str().optional().forRuntime("api", "temporal-worker"),
+
   // ── Camera / go2rtc (dogcam) ──────────────────────────────────────────────
   GO2RTC_URL: url().default("http://go2rtc:1984").forRuntime("api").forFeatures("dogcam"),
   CAMERA_STREAM_NAME: str().default("bedroom_mjpeg").forRuntime("api").forFeatures("dogcam"),

@@ -12,6 +12,17 @@ const valid = {
   APNS_TEAM_ID: "team-id",
   APNS_KEY_CONTENT: "private-key",
   PUSH_TOKEN_KEYRING: '{"activeKeyId":"v1","keys":{"v1":"example"}}',
+  SIWA_KEY_ID: "siwa-key-id",
+  SIWA_TEAM_ID: "siwa-team-id",
+  SIWA_KEY_CONTENT: "siwa-private-key",
+  APPLE_BUNDLE_ID: "co.worldwidewebb.textyourex",
+  ACCOUNT_DELETION_KEYRING:
+    '{"activeKeyId":"v1","keys":{"v1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}',
+  RESTORE_TOMBSTONE_HMAC_KEYRING:
+    '{"activeKeyId":"v1","keys":{"v1":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="}}',
+  RESTORE_TOMBSTONE_SIGNING_KEYRING:
+    '{"activeKeyId":"v1","keys":{"v1":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}}',
+  ERASURE_JOURNAL_DIR: "/mnt/erasure-journal",
 };
 
 describe("DTYE worker config", () => {
@@ -38,5 +49,22 @@ describe("DTYE worker config", () => {
     expect(() => parseTemporalWorkerConfig({ ...valid, APNS_KEY_CONTENT: undefined })).toThrow(
       /notification delivery secrets must be configured/,
     );
+  });
+
+  test("fails before connecting when account deletion secrets are absent", () => {
+    for (const key of [
+      "SIWA_KEY_ID",
+      "SIWA_TEAM_ID",
+      "SIWA_KEY_CONTENT",
+      "APPLE_BUNDLE_ID",
+      "ACCOUNT_DELETION_KEYRING",
+      "RESTORE_TOMBSTONE_HMAC_KEYRING",
+      "RESTORE_TOMBSTONE_SIGNING_KEYRING",
+      "ERASURE_JOURNAL_DIR",
+    ] as const) {
+      expect(() => parseTemporalWorkerConfig({ ...valid, [key]: undefined }), key).toThrow(
+        /account deletion secrets must be configured/,
+      );
+    }
   });
 });

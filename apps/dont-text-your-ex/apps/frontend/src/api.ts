@@ -6,6 +6,8 @@ import {
   AuthResponseSchema,
   type CreateJarRequest,
   type CreateReportRequest,
+  type DeleteAccountRequest,
+  DeleteAccountResponseSchema,
   JarDetailSchema,
   type JarId,
   JarPreviewSchema,
@@ -126,6 +128,8 @@ export const api = {
   // me
   me: () => req(MeSchema, "GET", "/me"),
   updateMe: (patch: UpdateMeRequest) => req(MeSchema, "PATCH", "/me", patch),
+  deleteAccount: (input: DeleteAccountRequest) =>
+    req(DeleteAccountResponseSchema, "DELETE", "/me", input),
   updateTimeZone: (input: UpdateTimeZoneRequest) =>
     req(OkResponseSchema, "PATCH", "/me/timezone", input),
   notificationPreferences: () =>

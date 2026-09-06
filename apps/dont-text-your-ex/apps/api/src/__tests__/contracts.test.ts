@@ -1,11 +1,15 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
+  AccountDeletionWorkflowInputSchema,
+  AppleAuthRequestSchema,
   AVATAR_MAX_BYTES,
   AvatarPhotoDataUrlSchema,
   CloseJarRequestSchema,
   CreateJarRequestSchema,
   CreateReportRequestSchema,
+  DeleteAccountRequestSchema,
+  DeleteAccountResponseSchema,
   EVIDENCE_MAX_BYTES,
   EVIDENCE_MAX_FILES,
   EvidenceImageInputSchema,
@@ -41,6 +45,57 @@ const JPEG_DATA_URL = "data:image/jpeg;base64,/9j/AA==";
 const WEBP_DATA_URL = "data:image/webp;base64,UklGRgAAAABXRUJQ";
 
 describe("request schemas", () => {
+  it("keeps account deletion confirmation and workflow history minimal and opaque", () => {
+    const request = {
+      confirmed: true,
+      authorizationCode: "single-use-authorization-code",
+      identityToken: "signed.identity.token",
+      nonce: "nonce_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    };
+    const response = {
+      status: "accepted",
+      deletionRequestId: "del_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    };
+    const workflow = {
+      schemaVersion: 1,
+      deletionRequestId: response.deletionRequestId,
+    };
+
+    expect(DeleteAccountRequestSchema.parse(request)).toEqual(request);
+    expect(DeleteAccountRequestSchema.parse({ confirmed: true })).toEqual({ confirmed: true });
+    expect(
+      DeleteAccountRequestSchema.safeParse({
+        confirmed: true,
+        authorizationCode: request.authorizationCode,
+      }).success,
+    ).toBe(false);
+    expect(DeleteAccountRequestSchema.safeParse({ confirmed: false }).success).toBe(false);
+    expect(DeleteAccountResponseSchema.parse(response)).toEqual(response);
+    expect(AccountDeletionWorkflowInputSchema.parse(workflow)).toEqual(workflow);
+    expect(
+      AccountDeletionWorkflowInputSchema.safeParse({ ...workflow, userId: "usr_private" }).success,
+    ).toBe(false);
+  });
+
+  it("carries the single-use Apple authorization code only through the strict sign-in request", () => {
+    const request = {
+      identityToken: "signed.identity.token",
+      authorizationCode: "single-use-authorization-code",
+      nonce: "nonce_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    };
+
+    expect(AppleAuthRequestSchema.parse(request)).toEqual(request);
+    expect(
+      AppleAuthRequestSchema.safeParse({
+        identityToken: request.identityToken,
+        nonce: request.nonce,
+      }).success,
+    ).toBe(false);
+    expect(AppleAuthRequestSchema.safeParse({ ...request, authorizationCode: "" }).success).toBe(
+      false,
+    );
+  });
+
   it("exposes expired as a terminal report status", () => {
     expect(ReportStatusSchema.parse("expired")).toBe("expired");
   });

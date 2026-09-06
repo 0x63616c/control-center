@@ -14,6 +14,7 @@ function onboardingContext(sessionExpired: boolean): AppCtx<RouteFor<"onboarding
     tab: fn(),
     signIn: fn(),
     signOut: fn(),
+    deleteAccount: fn(),
     sessionExpired,
     fireBurst: fn(),
     hasPendingReport: false,

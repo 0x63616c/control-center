@@ -52,6 +52,11 @@ const activityLastSuccess = new Gauge({
   labelNames: ["activity"] as const,
   registers: [metricsRegistry],
 });
+const accountDeletionErasureStuck = new Counter({
+  name: "www_dtye_account_deletion_erasure_stuck_total",
+  help: "DTYE account deletions whose local erasure had not completed after fifteen minutes.",
+  registers: [metricsRegistry],
+});
 
 export type DtyeOutboxSnapshot = Readonly<{
   pending: number;
@@ -102,4 +107,8 @@ export function observeDtyeOutboxRecoverySuccess(completedAtMs = Date.now()): vo
     { activity: boundedLabel("dtye.activity", "outbox_recovery", 2) },
     completedAtMs / 1000,
   );
+}
+
+export function observeDtyeAccountDeletionErasureStuck(): void {
+  accountDeletionErasureStuck.inc();
 }

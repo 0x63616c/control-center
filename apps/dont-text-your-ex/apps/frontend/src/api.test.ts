@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { JarIdSchema, ReportIdSchema, RescueInterventionIdSchema } from "../../../contracts";
+import {
+  AccountDeletionIdSchema,
+  JarIdSchema,
+  ReportIdSchema,
+  RescueInterventionIdSchema,
+} from "../../../contracts";
 import { api, inviteRetryAfterSeconds, isApiErrorStatus } from "./api";
 
 describe("frontend response JSON boundary", () => {
@@ -126,6 +131,33 @@ describe("frontend response JSON boundary", () => {
       3,
       `/api/rescue/${intervention.id}/command`,
       expect.objectContaining({ method: "POST", body: JSON.stringify({ action: "extend" }) }),
+    );
+  });
+
+  it("sends explicit confirmation and the fresh Apple authorization code to account deletion", async () => {
+    const deletionRequestId = AccountDeletionIdSchema.parse("del_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    const fetchMock = vi.fn(async () => Response.json({ status: "accepted", deletionRequestId }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      api.deleteAccount({
+        confirmed: true,
+        authorizationCode: "fresh-apple-code",
+        identityToken: "fresh-identity-token",
+        nonce: "nonce_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+    ).resolves.toEqual({ status: "accepted", deletionRequestId });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/me",
+      expect.objectContaining({
+        method: "DELETE",
+        body: JSON.stringify({
+          confirmed: true,
+          authorizationCode: "fresh-apple-code",
+          identityToken: "fresh-identity-token",
+          nonce: "nonce_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        }),
+      }),
     );
   });
 });

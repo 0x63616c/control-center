@@ -53,6 +53,7 @@ const invites = {
 
 function recordingObserver() {
   const observer: DtyeOperationsObserver = {
+    accountDeletionErasureStuck: vi.fn(),
     outboxSnapshot: vi.fn(),
     outboxDispatch: vi.fn(),
     outboxRecoverySucceeded: vi.fn(),

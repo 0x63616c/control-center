@@ -28,6 +28,7 @@ function store(overrides: Partial<NotificationStore> = {}): NotificationStore {
       },
     })),
     recordDeliveryOutcome: vi.fn(),
+    withDeliveryAccountFence: vi.fn(async (_deliveryId, effect) => effect()),
     ...overrides,
   } as NotificationStore;
 }

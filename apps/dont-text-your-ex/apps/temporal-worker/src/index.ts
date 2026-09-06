@@ -13,10 +13,24 @@ import { createLogger } from "@www/logger";
 import { initMetrics, startMetricsServer } from "@www/platform/metrics";
 import { temporalScheduleGateway } from "@www/temporal-runtime";
 import { Pool } from "pg";
+import {
+  createAccountDeletionCipher,
+  PostgresAccountDeletionStore,
+  parseAccountDeletionKeyring,
+} from "../../api/src/account-deletion";
 import { DomainTransactionRunner } from "../../api/src/domain-transaction";
 import { PostgresOutbox } from "../../api/src/outbox";
 import { PostgresRescueStore } from "../../api/src/rescue-store";
+import {
+  createFileRestoreTombstoneService,
+  parseRestoreTombstoneKeyring,
+} from "../../api/src/restore-tombstone";
+import {
+  createAccountDeletionActivities,
+  TemporalAccountDeletionWorkflowCleanupGateway,
+} from "./account-deletion";
 import { createDtyeActivities } from "./activities";
+import { createAppleClientSecret, createAppleRevocationGateway } from "./apple-revocation";
 import { prepareTemporalWorker } from "./boot";
 import { temporalWorkerConfig } from "./config";
 import { createInviteLifecycleActivities, PostgresInviteLifecycleStore } from "./invite-lifecycle";
@@ -36,6 +50,7 @@ import {
   TemporalClientWorkflowGateway,
   TemporalWorkflowDispatcher,
 } from "./temporal-workflow-dispatcher";
+import { PostgresTemporalWorkflowFence } from "./workflow-dispatch-fence";
 
 const logger = createLogger({ service: "dont-text-your-ex-temporal-worker" });
 const workflowsPath = new URL("./workflows.ts", import.meta.url).pathname;
@@ -62,6 +77,20 @@ async function main(): Promise<void> {
   const reports = new PostgresReportAccountabilityStore(pool);
   const transactions = new DomainTransactionRunner({ pool });
   const temporalGateway = new TemporalClientWorkflowGateway(client);
+  const accountDeletionStore = new PostgresAccountDeletionStore(
+    pool,
+    transactions,
+    Date.now,
+    createAccountDeletionCipher(
+      parseAccountDeletionKeyring(JSON.parse(config.accountDeletionKeyring)),
+    ),
+    createFileRestoreTombstoneService({
+      directory: config.erasureJournalDirectory,
+      hmacKeys: parseRestoreTombstoneKeyring(JSON.parse(config.restoreTombstoneHmacKeyring)),
+      signingKeys: parseRestoreTombstoneKeyring(JSON.parse(config.restoreTombstoneSigningKeyring)),
+    }),
+  );
+  const workflowFence = new PostgresTemporalWorkflowFence(pool);
   const apnsClients = {
     production: createApnsClient({
       authorization: apnsAuthorization,
@@ -80,6 +109,7 @@ async function main(): Promise<void> {
     outbox: new PostgresOutbox(pool),
     dispatcher: new TemporalWorkflowDispatcher(
       registeredTemporalEventHandlers(temporalGateway, WORKFLOW_TYPES),
+      workflowFence,
     ),
     sessions: new PostgresSessionMaintenanceStore(pool),
     streakMilestones: createStreakMilestoneActivities(
@@ -98,6 +128,22 @@ async function main(): Promise<void> {
     reports,
     rescue: createRescueActivities({ store: new PostgresRescueStore(pool) }),
     invites: createInviteLifecycleActivities(new PostgresInviteLifecycleStore(pool, transactions)),
+    accountDeletion: createAccountDeletionActivities({
+      store: accountDeletionStore,
+      apple: createAppleRevocationGateway({
+        clientId: config.appleBundleId,
+        clientSecret: () =>
+          createAppleClientSecret({
+            keyId: config.siwaKeyId,
+            teamId: config.siwaTeamId,
+            clientId: config.appleBundleId,
+            keyContent: config.siwaKeyContent,
+          }),
+      }),
+      workflows: new TemporalAccountDeletionWorkflowCleanupGateway(client),
+      observeErasureStuck: platformDtyeOperationsObserver.accountDeletionErasureStuck,
+      workflowFence,
+    }),
   });
   const worker = await prepareTemporalWorker({
     config,

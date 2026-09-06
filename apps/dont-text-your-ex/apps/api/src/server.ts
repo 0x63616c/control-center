@@ -1,9 +1,11 @@
 import { createLogger } from "@www/logger";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { api, type Env } from "./api";
+import { type AppleAccountReauthenticationVerifier, api, type Env } from "./api";
+import { verifyAppleAccountReauthentication } from "./apple-auth";
 import { authMiddleware } from "./auth";
 import { createInviteProbeLimiter, inviteProbeRateLimit } from "./invite-rate-limit";
+import * as store from "./store";
 
 const log = createLogger({ service: "dont-text-your-ex-api" });
 
@@ -16,9 +18,21 @@ const ALLOWED_ORIGINS = [
   "capacitor://localhost",
 ];
 
-export function buildApp(): Hono<Env> {
+export function buildApp(
+  dependencies: {
+    readonly verifyAppleAccountReauthentication?: AppleAccountReauthenticationVerifier;
+  } = {},
+): Hono<Env> {
   const app = new Hono<Env>();
   const inviteLimiter = createInviteProbeLimiter();
+
+  app.use("*", async (c, next) => {
+    c.set(
+      "verifyAppleAccountReauthentication",
+      dependencies.verifyAppleAccountReauthentication ?? verifyAppleAccountReauthentication,
+    );
+    await next();
+  });
 
   // Request log: proves whether a call (e.g. the native /auth/apple) actually
   // reaches the api and from which origin, with status + latency.
@@ -48,6 +62,14 @@ export function buildApp(): Hono<Env> {
   );
 
   app.use("/api/*", authMiddleware);
+  app.use("/api/*", async (c, next) => {
+    const userId = c.get("userId");
+    const method = c.req.method;
+    const isDeletionRequest = method === "DELETE" && c.req.path === "/api/me";
+    if (!userId || isDeletionRequest) return next();
+    const guarded = await store.withActiveAccountRequest(userId, next);
+    if (!guarded.active) return c.json({ error: "not_authenticated" }, 401);
+  });
   app.use("/api/jars/code/*", inviteProbeRateLimit(inviteLimiter));
   app.use("/api/jars/join", inviteProbeRateLimit(inviteLimiter));
   app.route("/api", api);

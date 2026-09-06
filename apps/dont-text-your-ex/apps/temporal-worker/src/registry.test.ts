@@ -13,6 +13,8 @@ describe("DTYE Temporal registry", () => {
       "UrgeRescueWorkflow",
       "StreakMilestoneSweepWorkflow",
       "InviteLifecycleWorkflow",
+      "AccountDeletionWorkflow",
+      "AccountDeletionHistorySweepWorkflow",
     ]);
     expect(Object.keys(workflows)).toContain("DtyeHealthCheckWorkflow");
     expect(Object.keys(workflows)).toContain("NotificationDeliveryWorkflow");
@@ -20,6 +22,8 @@ describe("DTYE Temporal registry", () => {
     expect(Object.keys(workflows)).toContain("UrgeRescueWorkflow");
     expect(Object.keys(workflows)).toContain("StreakMilestoneSweepWorkflow");
     expect(Object.keys(workflows)).toContain("InviteLifecycleWorkflow");
+    expect(Object.keys(workflows)).toContain("AccountDeletionWorkflow");
+    expect(Object.keys(workflows)).toContain("AccountDeletionHistorySweepWorkflow");
     expect(ACTIVITY_TYPES).toEqual([
       "DtyeHealthCheckActivity",
       "OutboxDispatchActivity",
@@ -35,6 +39,14 @@ describe("DTYE Temporal registry", () => {
       "StreakMilestoneSweepActivity",
       "loadInviteLifecycle",
       "requestInviteReminder",
+      "eraseAccountLocally",
+      "revokeAppleCredential",
+      "finishAccountDeletion",
+      "terminateAssociatedWorkflows",
+      "deleteAssociatedWorkflowHistories",
+      "sweepAccountDeletionHistories",
+      "purgeExpiredAccountDeletionRecords",
+      "recordAccountDeletionErasureStuck",
     ]);
     expect(MANAGED_SCHEDULE_PREFIX).toBe("dtye_");
     expect(SCHEDULES).toEqual([
@@ -64,6 +76,15 @@ describe("DTYE Temporal registry", () => {
         args: { schemaVersion: 1 },
         timeout: "10 minutes",
         catchupWindow: "1 minute",
+      },
+      {
+        scheduleId: "dtye_account_deletion_history_sweep",
+        workflowType: "AccountDeletionHistorySweepWorkflow",
+        cron: "23 * * * *",
+        timezone: "UTC",
+        args: { schemaVersion: 1 },
+        timeout: "10 minutes",
+        catchupWindow: "1 hour",
       },
       {
         scheduleId: "dtye_session_maintenance",

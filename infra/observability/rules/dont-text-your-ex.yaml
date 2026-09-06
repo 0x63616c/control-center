@@ -49,3 +49,10 @@ groups:
         annotations:
           summary: DTYE daily session maintenance has not succeeded in 30 hours
           runbook: apps/dont-text-your-ex/docs/temporal-operations.md#session-maintenance-recovery
+      - alert: DtyeAccountDeletionErasureStuck
+        expr: increase(www_dtye_account_deletion_erasure_stuck_total{service="dont-text-your-ex-temporal-worker"}[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: DTYE local account erasure exceeded fifteen minutes
+          runbook: apps/dont-text-your-ex/docs/temporal-operations.md#account-deletion-erasure

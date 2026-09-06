@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { renderWorkload } from "../src/component.ts";
 import {
+  DONT_TEXT_YOUR_EX_ACCOUNT_DELETION_SECRET_NAME,
   DONT_TEXT_YOUR_EX_API_PORT,
   DONT_TEXT_YOUR_EX_DATABASE,
   DONT_TEXT_YOUR_EX_HOSTNAME,
@@ -53,6 +54,7 @@ describe("Don't Text Your Ex production resources", () => {
         POSTGRES_PASSWORD_FILE: "/run/secrets/POSTGRES_PASSWORD",
         POSTGRES_USER: "dont_text_your_ex",
         TEMPORAL_ADDRESS: "temporal-server.temporal.svc.cluster.local:7233",
+        ERASURE_JOURNAL_DIR: "/erasure-journal",
       },
       extraSecretMounts: [
         {
@@ -65,6 +67,17 @@ describe("Don't Text Your Ex production resources", () => {
           mountPath: "/run/notification-secrets",
           items: [{ key: "PUSH_TOKEN_KEYRING", path: "PUSH_TOKEN_KEYRING" }],
         },
+        {
+          secretName: DONT_TEXT_YOUR_EX_ACCOUNT_DELETION_SECRET_NAME,
+          mountPath: "/run/account-deletion-secrets",
+        },
+      ],
+      volumes: [
+        {
+          mountPath: "/erasure-journal",
+          nfs: { server: "192.168.0.218", path: "/volume1/Homelab" },
+          subPath: "backups/world-wide-webb/dont-text-your-ex/erasure-journal",
+        },
       ],
     });
     expect(worker).toMatchObject({
@@ -75,6 +88,8 @@ describe("Don't Text Your Ex production resources", () => {
         TEMPORAL_NAMESPACE: "dont-text-your-ex",
         TEMPORAL_TASK_QUEUE: "main",
         TEMPORAL_ADDRESS: "temporal-server.temporal.svc.cluster.local:7233",
+        APPLE_BUNDLE_ID: "co.worldwidewebb.textyourex",
+        ERASURE_JOURNAL_DIR: "/erasure-journal",
       },
       scrape: { port: 9464 },
       extraSecretMounts: [
@@ -92,6 +107,17 @@ describe("Don't Text Your Ex production resources", () => {
             { key: "APNS_KEY_CONTENT", path: "APNS_KEY_CONTENT" },
             { key: "PUSH_TOKEN_KEYRING", path: "PUSH_TOKEN_KEYRING" },
           ],
+        },
+        {
+          secretName: DONT_TEXT_YOUR_EX_ACCOUNT_DELETION_SECRET_NAME,
+          mountPath: "/run/account-deletion-secrets",
+        },
+      ],
+      volumes: [
+        {
+          mountPath: "/erasure-journal",
+          nfs: { server: "192.168.0.218", path: "/volume1/Homelab" },
+          subPath: "backups/world-wide-webb/dont-text-your-ex/erasure-journal",
         },
       ],
     });

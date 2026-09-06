@@ -5,6 +5,10 @@ const store = vi.hoisted(() => ({
   getJarPreviewByCode: vi.fn(),
   joinJarByCode: vi.fn(),
   userIdForToken: vi.fn(),
+  withActiveAccountRequest: vi.fn(async (_userId: string, operation: () => Promise<unknown>) => ({
+    active: true as const,
+    value: await operation(),
+  })),
 }));
 
 vi.mock("../store", () => store);

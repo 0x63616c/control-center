@@ -1,5 +1,6 @@
 import {
   type DtyeOutboxSnapshot,
+  observeDtyeAccountDeletionErasureStuck,
   observeDtyeOutboxDispatch,
   observeDtyeOutboxRecoverySuccess,
   observeDtyeOutboxSnapshot,
@@ -12,6 +13,7 @@ export interface OutboxOperationalSnapshotStore {
 }
 
 export interface DtyeOperationsObserver {
+  accountDeletionErasureStuck(): void;
   outboxSnapshot(snapshot: DtyeOutboxSnapshot): void;
   outboxDispatch(
     input: Readonly<{
@@ -31,6 +33,7 @@ export interface DtyeOperationsObserver {
 }
 
 export const platformDtyeOperationsObserver: DtyeOperationsObserver = {
+  accountDeletionErasureStuck: observeDtyeAccountDeletionErasureStuck,
   outboxSnapshot: observeDtyeOutboxSnapshot,
   outboxDispatch: observeDtyeOutboxDispatch,
   outboxRecoverySucceeded: observeDtyeOutboxRecoverySuccess,

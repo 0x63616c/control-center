@@ -7,6 +7,7 @@
     "start": "bun run src/index.ts",
     "test": "vitest run",
     "seed": "APP_ENV=development bun run src/seed.ts",
+    "restore:replay": "bun run src/restore-replay-cli.ts",
     "typecheck": "tsc --noEmit",
     "seed:reset": "APP_ENV=development TYE_RESET=1 bun run src/seed.ts"
   },

@@ -15,6 +15,14 @@ export interface TemporalWorkerConfig {
   readonly apnsTeamId: string;
   readonly apnsKeyContent: string;
   readonly pushTokenKeyring: string;
+  readonly siwaKeyId: string;
+  readonly siwaTeamId: string;
+  readonly siwaKeyContent: string;
+  readonly appleBundleId: string;
+  readonly accountDeletionKeyring: string;
+  readonly restoreTombstoneHmacKeyring: string;
+  readonly restoreTombstoneSigningKeyring: string;
+  readonly erasureJournalDirectory: string;
 }
 
 type RawTemporalWorkerConfig = {
@@ -28,6 +36,14 @@ type RawTemporalWorkerConfig = {
   readonly APNS_TEAM_ID?: string;
   readonly APNS_KEY_CONTENT?: string;
   readonly PUSH_TOKEN_KEYRING?: string;
+  readonly SIWA_KEY_ID?: string;
+  readonly SIWA_TEAM_ID?: string;
+  readonly SIWA_KEY_CONTENT?: string;
+  readonly APPLE_BUNDLE_ID?: string;
+  readonly ACCOUNT_DELETION_KEYRING?: string;
+  readonly RESTORE_TOMBSTONE_HMAC_KEYRING?: string;
+  readonly RESTORE_TOMBSTONE_SIGNING_KEYRING?: string;
+  readonly ERASURE_JOURNAL_DIR?: string;
 };
 
 export function parseTemporalWorkerConfig(env: RawTemporalWorkerConfig): TemporalWorkerConfig {
@@ -40,6 +56,18 @@ export function parseTemporalWorkerConfig(env: RawTemporalWorkerConfig): Tempora
   if (!env.APNS_KEY_ID || !env.APNS_TEAM_ID || !env.APNS_KEY_CONTENT || !env.PUSH_TOKEN_KEYRING) {
     throw new Error("Don't Text Your Ex notification delivery secrets must be configured");
   }
+  if (
+    !env.SIWA_KEY_ID ||
+    !env.SIWA_TEAM_ID ||
+    !env.SIWA_KEY_CONTENT ||
+    !env.APPLE_BUNDLE_ID ||
+    !env.ACCOUNT_DELETION_KEYRING ||
+    !env.RESTORE_TOMBSTONE_HMAC_KEYRING ||
+    !env.RESTORE_TOMBSTONE_SIGNING_KEYRING ||
+    !env.ERASURE_JOURNAL_DIR
+  ) {
+    throw new Error("Don't Text Your Ex account deletion secrets must be configured");
+  }
   return {
     address: env.TEMPORAL_ADDRESS,
     namespace: DTYE_TEMPORAL_NAMESPACE,
@@ -51,6 +79,14 @@ export function parseTemporalWorkerConfig(env: RawTemporalWorkerConfig): Tempora
     apnsTeamId: env.APNS_TEAM_ID,
     apnsKeyContent: env.APNS_KEY_CONTENT,
     pushTokenKeyring: env.PUSH_TOKEN_KEYRING,
+    siwaKeyId: env.SIWA_KEY_ID,
+    siwaTeamId: env.SIWA_TEAM_ID,
+    siwaKeyContent: env.SIWA_KEY_CONTENT,
+    appleBundleId: env.APPLE_BUNDLE_ID,
+    accountDeletionKeyring: env.ACCOUNT_DELETION_KEYRING,
+    restoreTombstoneHmacKeyring: env.RESTORE_TOMBSTONE_HMAC_KEYRING,
+    restoreTombstoneSigningKeyring: env.RESTORE_TOMBSTONE_SIGNING_KEYRING,
+    erasureJournalDirectory: env.ERASURE_JOURNAL_DIR,
   };
 }
 
@@ -66,10 +102,25 @@ export function temporalWorkerConfig(): TemporalWorkerConfig {
     "APNS_TEAM_ID",
     "APNS_KEY_CONTENT",
     "PUSH_TOKEN_KEYRING",
+    "SIWA_KEY_ID",
+    "SIWA_TEAM_ID",
+    "SIWA_KEY_CONTENT",
+    "APPLE_BUNDLE_ID",
+    "ACCOUNT_DELETION_KEYRING",
+    "RESTORE_TOMBSTONE_HMAC_KEYRING",
+    "RESTORE_TOMBSTONE_SIGNING_KEYRING",
+    "ERASURE_JOURNAL_DIR",
   );
   const secretFile = (name: string): string | undefined => {
     try {
       return readFileSync(`/run/notification-secrets/${name}`, "utf-8").trim();
+    } catch {
+      return undefined;
+    }
+  };
+  const accountDeletionSecretFile = (name: string): string | undefined => {
+    try {
+      return readFileSync(`/run/account-deletion-secrets/${name}`, "utf-8").trim();
     } catch {
       return undefined;
     }
@@ -80,5 +131,18 @@ export function temporalWorkerConfig(): TemporalWorkerConfig {
     APNS_TEAM_ID: env.APNS_TEAM_ID ?? secretFile("APNS_TEAM_ID"),
     APNS_KEY_CONTENT: env.APNS_KEY_CONTENT ?? secretFile("APNS_KEY_CONTENT"),
     PUSH_TOKEN_KEYRING: env.PUSH_TOKEN_KEYRING ?? secretFile("PUSH_TOKEN_KEYRING"),
+    SIWA_KEY_ID: env.SIWA_KEY_ID ?? accountDeletionSecretFile("SIWA_KEY_ID"),
+    SIWA_TEAM_ID: env.SIWA_TEAM_ID ?? accountDeletionSecretFile("SIWA_TEAM_ID"),
+    SIWA_KEY_CONTENT: env.SIWA_KEY_CONTENT ?? accountDeletionSecretFile("SIWA_KEY_CONTENT"),
+    APPLE_BUNDLE_ID: env.APPLE_BUNDLE_ID ?? "co.worldwidewebb.textyourex",
+    ACCOUNT_DELETION_KEYRING:
+      env.ACCOUNT_DELETION_KEYRING ?? accountDeletionSecretFile("ACCOUNT_DELETION_KEYRING"),
+    RESTORE_TOMBSTONE_HMAC_KEYRING:
+      env.RESTORE_TOMBSTONE_HMAC_KEYRING ??
+      accountDeletionSecretFile("RESTORE_TOMBSTONE_HMAC_KEYRING"),
+    RESTORE_TOMBSTONE_SIGNING_KEYRING:
+      env.RESTORE_TOMBSTONE_SIGNING_KEYRING ??
+      accountDeletionSecretFile("RESTORE_TOMBSTONE_SIGNING_KEYRING"),
+    ERASURE_JOURNAL_DIR: env.ERASURE_JOURNAL_DIR,
   });
 }

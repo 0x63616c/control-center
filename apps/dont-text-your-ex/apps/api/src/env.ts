@@ -16,6 +16,19 @@ const ENV = defineEnv({
   TEMPORAL_ADDRESS: str().optional(),
   PUSH_TOKEN_KEYRING_FILE: str().default("/run/secrets/PUSH_TOKEN_KEYRING"),
   PUSH_TOKEN_KEYRING: str().optional(),
+  ACCOUNT_DELETION_KEYRING_FILE: str().default("/run/secrets/ACCOUNT_DELETION_KEYRING"),
+  ACCOUNT_DELETION_KEYRING: str().optional(),
+  RESTORE_TOMBSTONE_HMAC_KEYRING_FILE: str().default(
+    "/run/account-deletion-secrets/RESTORE_TOMBSTONE_HMAC_KEYRING",
+  ),
+  RESTORE_TOMBSTONE_HMAC_KEYRING: str().optional(),
+  RESTORE_TOMBSTONE_SIGNING_KEYRING_FILE: str().default(
+    "/run/account-deletion-secrets/RESTORE_TOMBSTONE_SIGNING_KEYRING",
+  ),
+  RESTORE_TOMBSTONE_SIGNING_KEYRING: str().optional(),
+  ERASURE_JOURNAL_DIR: str().optional(),
+  DTYE_RESTORE_MODE: str().optional(),
+  DTYE_RESTORE_TRAFFIC_DISABLED: str().optional(),
   TYE_RESET: str().optional(),
 });
 
@@ -52,6 +65,87 @@ export function pushTokenKeyringSource(): unknown {
       cause: error,
     });
   }
+}
+
+export function accountDeletionKeyringSource(): unknown {
+  try {
+    return JSON.parse(
+      ENV.ACCOUNT_DELETION_KEYRING ?? readFileSync(ENV.ACCOUNT_DELETION_KEYRING_FILE, "utf-8"),
+    );
+  } catch (error) {
+    if (ENV.APP_ENV !== "production") {
+      return { activeKeyId: "local", keys: { local: Buffer.alloc(32, 11).toString("base64") } };
+    }
+    throw new Error("Don't Text Your Ex: ACCOUNT_DELETION_KEYRING_FILE must contain valid JSON", {
+      cause: error,
+    });
+  }
+}
+
+function restoreTombstoneKeyringSource(
+  inline: string | undefined,
+  file: string,
+  fallbackByte: number,
+  label: string,
+): unknown {
+  try {
+    return JSON.parse(inline ?? readFileSync(file, "utf-8"));
+  } catch (error) {
+    if (ENV.APP_ENV !== "production") {
+      return {
+        activeKeyId: "local",
+        keys: { local: Buffer.alloc(32, fallbackByte).toString("base64") },
+      };
+    }
+    throw new Error(`Don't Text Your Ex: ${label} must contain valid JSON`, { cause: error });
+  }
+}
+
+export function restoreTombstoneHmacKeyringSource(): unknown {
+  return restoreTombstoneKeyringSource(
+    ENV.RESTORE_TOMBSTONE_HMAC_KEYRING,
+    ENV.RESTORE_TOMBSTONE_HMAC_KEYRING_FILE,
+    12,
+    "RESTORE_TOMBSTONE_HMAC_KEYRING_FILE",
+  );
+}
+
+export function restoreTombstoneSigningKeyringSource(): unknown {
+  return restoreTombstoneKeyringSource(
+    ENV.RESTORE_TOMBSTONE_SIGNING_KEYRING,
+    ENV.RESTORE_TOMBSTONE_SIGNING_KEYRING_FILE,
+    13,
+    "RESTORE_TOMBSTONE_SIGNING_KEYRING_FILE",
+  );
+}
+
+export function erasureJournalDirectory(): string {
+  if (ENV.ERASURE_JOURNAL_DIR) return ENV.ERASURE_JOURNAL_DIR;
+  if (ENV.APP_ENV === "production") {
+    throw new Error("Don't Text Your Ex: ERASURE_JOURNAL_DIR must be configured in production");
+  }
+  return "/tmp/dont-text-your-ex-erasure-journal";
+}
+
+export function isolatedRestoreReplayConfig(): {
+  readonly hmacKeyringFile: string;
+  readonly signingKeyringFile: string;
+  readonly journalDirectory: string;
+} {
+  if (ENV.DTYE_RESTORE_MODE !== "isolated-scratch") {
+    throw new Error("restore replay refuses to run outside isolated-scratch mode");
+  }
+  if (ENV.DTYE_RESTORE_TRAFFIC_DISABLED !== "true") {
+    throw new Error("restore replay requires application traffic to be disabled");
+  }
+  if (!ENV.ERASURE_JOURNAL_DIR) {
+    throw new Error("restore replay requires ERASURE_JOURNAL_DIR");
+  }
+  return {
+    hmacKeyringFile: ENV.RESTORE_TOMBSTONE_HMAC_KEYRING_FILE,
+    signingKeyringFile: ENV.RESTORE_TOMBSTONE_SIGNING_KEYRING_FILE,
+    journalDirectory: ENV.ERASURE_JOURNAL_DIR,
+  };
 }
 
 export function requireDatabaseUrl(): string {

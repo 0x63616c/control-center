@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DomainEvent } from "../../api/src/domain-events";
 import type { Outbox } from "../../api/src/outbox";
 import { dispatchOutboxPage, type WorkflowDispatcher } from "../../api/src/workflow-dispatcher";
+import type { AccountDeletionActivities } from "./account-deletion";
 import type { InviteLifecycleActivities } from "./invite-lifecycle";
 import type { NotificationActivities } from "./notification-activities";
 import type {
@@ -59,11 +60,27 @@ export type DtyeActivityDependencies = Readonly<{
   reports: ReportAccountabilityStore;
   rescue: RescueActivities;
   invites: InviteLifecycleActivities;
+  accountDeletion?: AccountDeletionActivities;
   clock?: () => number;
 }>;
 
 export function createDtyeActivities(dependencies: DtyeActivityDependencies) {
   const clock = dependencies.clock ?? Date.now;
+  const missingAccountDeletion = async (): Promise<never> => {
+    throw new Error("account deletion activities are not configured");
+  };
+  const accountDeletion =
+    dependencies.accountDeletion ??
+    ({
+      eraseAccountLocally: missingAccountDeletion,
+      revokeAppleCredential: missingAccountDeletion,
+      finishAccountDeletion: missingAccountDeletion,
+      terminateAssociatedWorkflows: missingAccountDeletion,
+      deleteAssociatedWorkflowHistories: missingAccountDeletion,
+      sweepAccountDeletionHistories: missingAccountDeletion,
+      purgeExpiredAccountDeletionRecords: missingAccountDeletion,
+      recordAccountDeletionErasureStuck: missingAccountDeletion,
+    } satisfies AccountDeletionActivities);
   return {
     DtyeHealthCheckActivity,
     async OutboxDispatchActivity(
@@ -129,6 +146,7 @@ export function createDtyeActivities(dependencies: DtyeActivityDependencies) {
     ...dependencies.rescue,
     ...dependencies.streakMilestones,
     ...dependencies.invites,
+    ...accountDeletion,
   };
 }
 

@@ -73,6 +73,7 @@ function context<Name extends RouteFor<"create" | "invite" | "join" | "logSlip">
     tab: fn(),
     signIn: fn(),
     signOut: fn(),
+    deleteAccount: fn(),
     sessionExpired: false,
     fireBurst: fn(),
     hasPendingReport: false,

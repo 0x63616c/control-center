@@ -77,6 +77,7 @@ function context<
     tab: fn(),
     signIn: fn(),
     signOut: fn(),
+    deleteAccount: fn(),
     sessionExpired: false,
     fireBurst: fn(),
     hasPendingReport: false,

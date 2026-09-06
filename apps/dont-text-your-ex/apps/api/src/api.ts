@@ -7,6 +7,8 @@ import {
   CloseJarRequestSchema,
   CreateJarRequestSchema,
   CreateReportRequestSchema,
+  DeleteAccountRequestSchema,
+  DeleteAccountResponseSchema,
   DisablePushDeviceRequestSchema,
   InviteCodeSchema,
   JarIdSchema,
@@ -31,7 +33,11 @@ import {
   UpdateTimeZoneRequestSchema,
   type UserId,
 } from "../../../contracts";
-import { completeAppleAccountSignIn, verifyAppleIdentityToken } from "./apple-auth";
+import {
+  completeAppleAccountSignIn,
+  type verifyAppleAccountReauthentication,
+  verifyAppleIdentityToken,
+} from "./apple-auth";
 import { requireUser } from "./auth";
 import { errorDetails, parseRequestJson, parseRequestValue } from "./boundary";
 import { appleBundleId, isProduction } from "./env";
@@ -41,7 +47,15 @@ import { rescueStore } from "./rescue";
 import { resetAndSeed } from "./seed";
 import * as store from "./store";
 
-export type Env = { Variables: { userId: UserId | null; token: SessionToken | null } };
+export type AppleAccountReauthenticationVerifier = typeof verifyAppleAccountReauthentication;
+
+export type Env = {
+  Variables: {
+    userId: UserId | null;
+    token: SessionToken | null;
+    verifyAppleAccountReauthentication: AppleAccountReauthenticationVerifier;
+  };
+};
 
 export const api = new Hono<Env>();
 
@@ -182,6 +196,39 @@ api.patch("/me", async (c) => {
   }
   if (body.exes !== undefined) await store.setExes(uid, body.exes);
   return c.json(await store.getMe(uid));
+});
+
+api.delete("/me", async (c) => {
+  const uid = requireUser(c);
+  if (!uid) return c.json(unauth, 401);
+  const parsed = await parseRequestJson(c, DeleteAccountRequestSchema);
+  if (!parsed.ok) return parsed.response;
+  const reauthentication = "authorizationCode" in parsed.value ? parsed.value : undefined;
+  const expectedAppleSubject = await store.appleSubjectForUser(uid);
+  if (expectedAppleSubject) {
+    if (!reauthentication) {
+      return c.json({ error: "Fresh Sign in with Apple authorization is required" }, 401);
+    }
+    try {
+      await c.get("verifyAppleAccountReauthentication")({
+        identityToken: reauthentication.identityToken,
+        nonce: reauthentication.nonce,
+        expectedSubject: expectedAppleSubject,
+      });
+    } catch {
+      return c.json({ error: "Sign in with Apple reauthentication failed" }, 401);
+    }
+  }
+  const receipt = await store.requestAccountDeletion(
+    uid,
+    reauthentication && expectedAppleSubject
+      ? {
+          authorizationCode: reauthentication.authorizationCode,
+          appleSubject: expectedAppleSubject,
+        }
+      : undefined,
+  );
+  return c.json(DeleteAccountResponseSchema.parse(receipt), 202);
 });
 
 api.patch("/me/timezone", async (c) => {
