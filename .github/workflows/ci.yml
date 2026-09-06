@@ -881,8 +881,29 @@ jobs:
       - name: Install infra deps
         run: bun install --frozen-lockfile
 
+      - name: Test and dry-run Don't Text Your Ex edge Worker
+        working-directory: infra/cloudflare
+        run: bun run worker:check
+
       - name: Install Pulumi CLI
         uses: pulumi/actions@v7
+
+      # Wrangler owns only the Worker script + bindings. Fetch its API token
+      # from the existing encrypted Pulumi config, mask it, and deploy the
+      # script before Pulumi can attach the route to that script name.
+      - name: Deploy Don't Text Your Ex edge Worker
+        working-directory: infra/cloudflare
+        run: |
+          STACK=prod
+          pulumi login
+          pulumi stack select "$STACK"
+          CLOUDFLARE_API_TOKEN=$(pulumi config get apiToken --show-secrets --stack "$STACK")
+          echo "::add-mask::$CLOUDFLARE_API_TOKEN"
+          export CLOUDFLARE_API_TOKEN
+          # Upload but do not activate a fresh emergency rollback candidate.
+          # Its version ID remains in Wrangler's deployment output/history.
+          bun run worker:upload:pass-through
+          bun run worker:deploy
 
       - name: pulumi up (Cloudflare edge state)
         working-directory: infra/cloudflare

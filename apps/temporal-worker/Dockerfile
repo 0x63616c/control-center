@@ -43,6 +43,7 @@ COPY packages/theme/package.json packages/theme/
 COPY packages/worker-runtime/package.json packages/worker-runtime/
 COPY infra/package.json infra/
 COPY infra/cloudflare/package.json infra/cloudflare/
+COPY infra/cloudflare/workers/dont-text-your-ex-edge/package.json infra/cloudflare/workers/dont-text-your-ex-edge/
 COPY infra/unifi/package.json infra/unifi/
 
 # --production drops devDependencies (playwright, vitest, biome…) so the

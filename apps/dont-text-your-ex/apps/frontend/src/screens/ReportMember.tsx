@@ -47,6 +47,8 @@ const EVIDENCE_ERROR_MESSAGE: Record<EvidenceFileError, string> = {
   too_many_files: `Add no more than ${EVIDENCE_MAX_FILES} screenshots.`,
   unsupported_type: "Choose PNG, JPEG, or WebP screenshots.",
   file_too_large: "Each screenshot must be 2 MB or smaller.",
+  invalid_dimensions: "That screenshot has invalid dimensions. Try another file.",
+  output_too_large: "That screenshot is too detailed to attach. Try a smaller image.",
   read_failed: "That screenshot could not be read. Try another file.",
 };
 

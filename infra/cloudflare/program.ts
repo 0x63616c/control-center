@@ -3,8 +3,9 @@
 // LIVE DEPLOY TARGET (was adopt-only at import, www-j934.2; promoted www-kbiy).
 // This stack now drives the live Cloudflare edge: tunnel ingress routing, proxied
 // DNS, and per-product Access apps. The original "mirror, do not apply" import era
-// is over, `pulumi up` here is a real prod mutation. Every resource is still
-// `protect: true`.
+// is over, `pulumi up` here is a real prod mutation. Every durable resource is
+// still `protect: true`; the DTYE Worker route alone is intentionally
+// recoverable so emergency removal falls back to the origin limiter.
 //
 // CI OWNS THIS PROJECT NOW (www-cred is done): `.github/workflows/ci.yml` has a
 // `deploy-cloudflare` job that runs `pulumi up` on push to `main`. It is gated
@@ -36,6 +37,7 @@ import * as cloudflare from "@pulumi/cloudflare";
 import * as pulumi from "@pulumi/pulumi";
 import { type AccessInclude, desiredAccessApps } from "./src/access.ts";
 import { desiredCnames, desiredIngressRules } from "./src/routes.ts";
+import { createDontTextYourExWorkerRoute } from "./src/worker-route.ts";
 
 const cfg = new pulumi.Config();
 // zoneName is the public domain (plaintext). The account/zone/tunnel ids + the
@@ -250,6 +252,16 @@ for (const c of desiredCnames(zoneName)) {
     opts,
   );
 }
+
+// The script and its RateLimit bindings are deployed by Wrangler before this
+// Pulumi program runs. Keeping route ownership here preserves the edge topology
+// in the authoritative stack while avoiding a Cloudflare provider v6 migration.
+const dontTextYourExWorkerRoute = createDontTextYourExWorkerRoute({
+  zoneId,
+  zoneName,
+  provider,
+});
+export const dontTextYourExWorkerRouteId = dontTextYourExWorkerRoute.id;
 
 // TLS: every host is a single label under the zone (`app.worldwidewebb.co`),
 // so Cloudflare's free Universal SSL `*.worldwidewebb.co` (one-level wildcard)

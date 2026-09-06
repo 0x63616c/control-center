@@ -3,7 +3,14 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { api, type Env } from "./api";
 import { authMiddleware } from "./auth";
-import { createInviteProbeLimiter, inviteProbeRateLimit } from "./invite-rate-limit";
+import {
+  createOriginRateLimiter,
+  DEFAULT_ORIGIN_RATE_LIMITS,
+  type OriginRateLimits,
+  originClientRateLimit,
+  originUserRateLimit,
+} from "./origin-rate-limit";
+import { privacySafeRequestPath } from "./request-log-path";
 
 const log = createLogger({ service: "dont-text-your-ex-api" });
 
@@ -16,19 +23,34 @@ const ALLOWED_ORIGINS = [
   "capacitor://localhost",
 ];
 
-export function buildApp(): Hono<Env> {
+export type BuildAppOptions = Readonly<{
+  rateLimit?: Readonly<{
+    clock?: () => number;
+    limits?: OriginRateLimits;
+    maxBuckets?: number;
+  }>;
+}>;
+
+export function buildApp(options: BuildAppOptions = {}): Hono<Env> {
   const app = new Hono<Env>();
-  const inviteLimiter = createInviteProbeLimiter();
+  const limiter = createOriginRateLimiter({
+    clock: options.rateLimit?.clock,
+    limits: options.rateLimit?.limits ?? DEFAULT_ORIGIN_RATE_LIMITS,
+    maxBuckets: options.rateLimit?.maxBuckets,
+  });
 
   // Request log: proves whether a call (e.g. the native /auth/apple) actually
   // reaches the api and from which origin, with status + latency.
   app.use("*", async (c, next) => {
     const start = Date.now();
     await next();
+    // Kubernetes probes are intentionally quiet; public health traffic is
+    // still bounded by the edge and trusted-client origin limiter.
+    if (c.req.path === "/api/health") return;
     log.info(
       {
         method: c.req.method,
-        path: c.req.path,
+        path: privacySafeRequestPath(c.req.path),
         status: c.res.status,
         ms: Date.now() - start,
         origin: c.req.header("Origin") ?? null,
@@ -47,9 +69,9 @@ export function buildApp(): Hono<Env> {
     }),
   );
 
+  app.use("/api/*", originClientRateLimit(limiter));
   app.use("/api/*", authMiddleware);
-  app.use("/api/jars/code/*", inviteProbeRateLimit(inviteLimiter));
-  app.use("/api/jars/join", inviteProbeRateLimit(inviteLimiter));
+  app.use("/api/*", originUserRateLimit(limiter));
   app.route("/api", api);
 
   return app;

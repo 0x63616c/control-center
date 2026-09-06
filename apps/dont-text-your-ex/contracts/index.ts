@@ -5,12 +5,17 @@ export * from "./notifications";
 const idSchema = <Prefix extends string, Brand extends string>(prefix: Prefix, brand: Brand) =>
   z
     .string()
+    .max(prefix.length + 1 + 64, `invalid ${brand}`)
     .regex(new RegExp(`^${prefix}_[A-Za-z0-9]+$`), `invalid ${brand}`)
     .brand<Brand>();
 
 export const UserIdSchema = idSchema("usr", "UserId");
 export const JarIdSchema = idSchema("jar", "JarId");
 export const ReportIdSchema = idSchema("rpt", "ReportId");
+export const AbuseReportIdSchema = z
+  .string()
+  .regex(/^abr_[a-f0-9]{32}$/, "invalid AbuseReportId")
+  .brand<"AbuseReportId">();
 export const RescueInterventionIdSchema = z
   .string()
   .regex(/^rsi_[a-f0-9]{32}$/, "invalid RescueInterventionId")
@@ -22,6 +27,7 @@ export const EvidenceIdSchema = idSchema("evi", "EvidenceId");
 export type UserId = z.infer<typeof UserIdSchema>;
 export type JarId = z.infer<typeof JarIdSchema>;
 export type ReportId = z.infer<typeof ReportIdSchema>;
+export type AbuseReportId = z.infer<typeof AbuseReportIdSchema>;
 export type RescueInterventionId = z.infer<typeof RescueInterventionIdSchema>;
 export type SessionToken = z.infer<typeof SessionTokenSchema>;
 
@@ -44,27 +50,28 @@ export const AuthDevRequestSchema = z
 
 export const AppleAuthRequestSchema = z
   .object({
-    identityToken: nonEmptyText,
+    identityToken: nonEmptyText.max(20_000),
     nonce: z.string().regex(/^nonce_[a-f0-9]{48}$/),
-    fullName: z.string().optional(),
+    fullName: z.string().trim().max(100).optional(),
   })
   .strict();
 
 export const CreateJarRequestSchema = z
   .object({
-    name: nonEmptyText,
-    rule: z.string().optional(),
+    name: nonEmptyText.max(80),
+    rule: z.string().max(500).optional(),
     defaultCents: cents.optional(),
   })
   .strict();
 
 export const JoinJarRequestSchema = z.object({ code: InviteCodeSchema }).strict();
+export const PreviewJarRequestSchema = z.object({ code: InviteCodeSchema }).strict();
 export const ShareStreakRequestSchema = z.object({ value: z.boolean() }).strict();
 export const LogSlipRequestSchema = z
   .object({
     amountCents: cents,
-    note: z.string().optional(),
-    exLabel: z.string().optional(),
+    note: z.string().max(2_000).optional(),
+    exLabel: z.string().max(100).optional(),
   })
   .strict();
 
@@ -117,7 +124,9 @@ function hasImageSignature(mimeType: (typeof EVIDENCE_IMAGE_MIME_TYPES)[number],
 
 export const EvidenceImageInputSchema = z
   .object({
-    mimeType: z.enum(EVIDENCE_IMAGE_MIME_TYPES),
+    // The picker accepts common screenshot formats, but the browser must
+    // normalize them before this public API boundary.
+    mimeType: z.literal("image/png"),
     dataUrl: z.string(),
   })
   .strict()
@@ -159,20 +168,24 @@ export const AvatarPhotoDataUrlSchema = z.string().superRefine((dataUrl, ctx) =>
   }
 });
 
+export const AVATAR_EMOJIS = ["🫠", "💔", "🥲", "😈", "🦝", "🍷", "👀"] as const;
+const AvatarEmojiSchema = z.enum(AVATAR_EMOJIS);
+export type AvatarEmoji = z.infer<typeof AvatarEmojiSchema>;
+
 export const UpdateMeRequestSchema = z
   .object({
-    name: nonEmptyText.optional(),
-    color: z.string().optional(),
-    emoji: z.string().nullable().optional(),
+    name: nonEmptyText.max(80).optional(),
+    color: z.string().max(32).optional(),
+    emoji: AvatarEmojiSchema.nullable().optional(),
     photo: AvatarPhotoDataUrlSchema.nullable().optional(),
-    exes: z.array(z.string()).optional(),
+    exes: z.array(z.string().max(100)).max(20).optional(),
   })
   .strict();
 
 export const CreateReportRequestSchema = z
   .object({
     accusedId: UserIdSchema,
-    note: nonEmptyText.optional(),
+    note: nonEmptyText.max(2_000).optional(),
     anonymous: z.boolean().optional(),
     amountCents: cents.optional(),
     evidence: z.array(EvidenceImageInputSchema).max(EVIDENCE_MAX_FILES).optional(),
@@ -189,6 +202,31 @@ export const CreateReportRequestSchema = z
   });
 
 export const ResolveReportRequestSchema = z.object({ action: z.enum(["own", "deny"]) }).strict();
+export const CreateAbuseReportRequestSchema = z
+  .object({
+    targetUserId: UserIdSchema,
+    narrative: z.string().trim().min(1).max(2_000).optional(),
+    reference: z
+      .object({
+        jarId: JarIdSchema.optional(),
+        gameplayReportId: ReportIdSchema.optional(),
+      })
+      .strict()
+      .refine((reference) => reference.jarId != null || reference.gameplayReportId != null, {
+        message: "at least one moderation reference is required",
+      })
+      .optional(),
+  })
+  .strict()
+  .refine((report) => report.narrative != null || report.reference != null, {
+    message: "a narrative or authorized reference is required",
+  });
+export const AbuseReportReceiptSchema = z
+  .object({
+    receiptId: AbuseReportIdSchema,
+    status: z.literal("received"),
+  })
+  .strict();
 export const RescueCommandRequestSchema = z
   .object({ action: z.enum(["safe", "slipped", "extend"]) })
   .strict();
@@ -218,6 +256,7 @@ export type CreateJarRequest = z.infer<typeof CreateJarRequestSchema>;
 export type LogSlipRequest = z.infer<typeof LogSlipRequestSchema>;
 export type EvidenceImageInput = z.infer<typeof EvidenceImageInputSchema>;
 export type CreateReportRequest = z.infer<typeof CreateReportRequestSchema>;
+export type CreateAbuseReportRequest = z.infer<typeof CreateAbuseReportRequestSchema>;
 export type RescueCommandRequest = z.infer<typeof RescueCommandRequestSchema>;
 
 const rescueBase = {
@@ -386,7 +425,7 @@ const EvidenceSchema = z
   .object({
     id: EvidenceIdSchema,
     kind: z.literal("image"),
-    mimeType: z.enum(EVIDENCE_IMAGE_MIME_TYPES),
+    mimeType: z.literal("image/png"),
     dataUrl: z.string(),
   })
   .strict();

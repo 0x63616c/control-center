@@ -32,13 +32,13 @@ import {
 } from "./domain-events";
 import { type DomainTransactionContext, DomainTransactionRunner } from "./domain-transaction";
 import { temporalAddress } from "./env";
+import type { SanitizedEvidenceImage } from "./evidence-image";
 import { id, inviteCode } from "./ids";
 import { parseEvidenceImageJson, serializeEvidenceImageJson } from "./persistence";
 import { TemporalPostCommitNudge, temporalRecoveryWorkflowStarter } from "./temporal-nudge";
 import type {
   ActivityDTO,
   ActivityType,
-  EvidenceImageInput,
   JarDetailDTO,
   JarSummaryDTO,
   MeDTO,
@@ -166,6 +166,12 @@ export class JarClosedError extends Error {
   }
 }
 
+export class BlockedInteractionError extends Error {
+  constructor() {
+    super("blocked interaction");
+  }
+}
+
 const USER_COLORS = [
   "#FF375F",
   "#5E5CE6",
@@ -223,6 +229,145 @@ export async function getMe(userId: UserId): Promise<MeDTO | null> {
     exes: await exesFor(u.id),
     phone: u.phone,
   };
+}
+
+async function hasBlockBetween(db: Queryable, first: UserId, second: UserId): Promise<boolean> {
+  const result = await db.query(
+    `SELECT 1 FROM user_block
+     WHERE (blocker_user_id=$1 AND blocked_user_id=$2)
+        OR (blocker_user_id=$2 AND blocked_user_id=$1)
+     LIMIT 1`,
+    [first, second],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+async function lockUsers(db: Queryable, userIds: readonly UserId[]): Promise<void> {
+  const uniqueIds = [...new Set(userIds)].sort();
+  if (uniqueIds.length === 0) return;
+  await db.query("SELECT id FROM users WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE", [
+    uniqueIds,
+  ]);
+}
+
+async function lockJarParticipants(
+  db: Queryable,
+  jarId: JarId,
+  additionalUserIds: readonly UserId[] = [],
+): Promise<readonly UserId[]> {
+  const result = await db.query<{ user_id: string }>(
+    "SELECT user_id FROM memberships WHERE jar_id=$1 AND left_at IS NULL ORDER BY user_id",
+    [jarId],
+  );
+  const participantIds = result.rows.map((row) => UserIdSchema.parse(row.user_id));
+  await lockUsers(db, [...participantIds, ...additionalUserIds]);
+  return participantIds;
+}
+
+async function assertNoBlockedJarParticipant(
+  db: Queryable,
+  jarId: JarId,
+  userId: UserId,
+): Promise<void> {
+  await lockJarParticipants(db, jarId, [userId]);
+  if (await jarHasBlockedMember(db, jarId, userId)) throw new BlockedInteractionError();
+}
+
+async function blockedUserIdsFor(viewerId: UserId): Promise<ReadonlySet<UserId>> {
+  const result = await pool.query<{ other_user_id: string }>(
+    `SELECT blocked_user_id AS other_user_id FROM user_block WHERE blocker_user_id=$1
+     UNION
+     SELECT blocker_user_id AS other_user_id FROM user_block WHERE blocked_user_id=$1`,
+    [viewerId],
+  );
+  return new Set(result.rows.map((row) => UserIdSchema.parse(row.other_user_id)));
+}
+
+async function jarHasBlockedMember(db: Queryable, jarId: JarId, userId: UserId): Promise<boolean> {
+  const result = await db.query(
+    `SELECT 1
+     FROM memberships membership
+     JOIN user_block block
+       ON (block.blocker_user_id=$1 AND block.blocked_user_id=membership.user_id)
+       OR (block.blocked_user_id=$1 AND block.blocker_user_id=membership.user_id)
+     WHERE membership.jar_id=$2 AND membership.left_at IS NULL
+     LIMIT 1`,
+    [userId, jarId],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+async function suppressPairNotifications(
+  db: Queryable,
+  first: UserId,
+  second: UserId,
+  blockedAt: number,
+): Promise<void> {
+  await db.query(
+    `WITH pair_notifications AS (
+       SELECT notification.id
+       FROM user_notification notification
+       WHERE notification.recipient_user_id IN ($1,$2)
+         AND (
+           (notification.target_type='report' AND EXISTS (
+             SELECT 1 FROM reports report
+             WHERE report.id=notification.target_id
+               AND ((report.accuser_id=$1 AND report.accused_id=$2)
+                 OR (report.accuser_id=$2 AND report.accused_id=$1))
+           ))
+           OR (notification.target_type='activity' AND EXISTS (
+             SELECT 1 FROM activity event
+             WHERE event.id=notification.target_id
+               AND ((event.actor_id=$1 AND event.target_id=$2)
+                 OR (event.actor_id=$2 AND event.target_id=$1))
+           ))
+         )
+     ), cancelled AS (
+       UPDATE user_notification notification
+       SET cancelled_at=COALESCE(notification.cancelled_at,$3)
+       WHERE notification.id IN (SELECT id FROM pair_notifications)
+       RETURNING notification.id
+     )
+     UPDATE notification_delivery delivery
+     SET status='suppressed',updated_at=$3
+     WHERE delivery.notification_id IN (SELECT id FROM pair_notifications)
+       AND delivery.status='pending'`,
+    [first, second, blockedAt],
+  );
+}
+
+export async function blockUser(blockerUserId: UserId, blockedUserId: UserId): Promise<void> {
+  await withTransaction(async (db) => {
+    await lockUsers(db, [blockerUserId, blockedUserId]);
+    const blockedAt = now();
+    await db.query(
+      `INSERT INTO user_block (blocker_user_id,blocked_user_id,created_at)
+       SELECT $1,target.id,$3 FROM users target
+       WHERE target.id=$2 AND $1<>$2
+       ON CONFLICT DO NOTHING`,
+      [blockerUserId, blockedUserId, blockedAt],
+    );
+    await suppressPairNotifications(db, blockerUserId, blockedUserId, blockedAt);
+  });
+}
+
+export async function listBlockedUsers(blockerUserId: UserId): Promise<UserDTO[]> {
+  const result = await pool.query<UserDbRow>(
+    `SELECT blocked_user.*
+     FROM user_block block
+     JOIN users blocked_user ON blocked_user.id=block.blocked_user_id
+     WHERE block.blocker_user_id=$1
+     ORDER BY block.created_at DESC, blocked_user.id`,
+    [blockerUserId],
+  );
+  return Promise.all(result.rows.map(parseUserRow).map(serializeUser));
+}
+
+export async function unblockUser(blockerUserId: UserId, blockedUserId: UserId): Promise<void> {
+  await pool.query("DELETE FROM user_block WHERE blocker_user_id=$1 AND blocked_user_id=$2", [
+    blockerUserId,
+    blockedUserId,
+  ]);
 }
 
 export async function updateUserTimeZone(userId: UserId, timezone: IanaTimeZone): Promise<void> {
@@ -409,8 +554,11 @@ async function assertJarOpen(jarId: JarId, db: Queryable = pool, lock = false): 
   return jar;
 }
 
-async function closedByUser(jar: JarRow): Promise<UserDTO | null> {
-  return jar.closed_by ? getUser(jar.closed_by) : null;
+async function closedByUser(
+  jar: JarRow,
+  blockedUserIds: ReadonlySet<UserId> = new Set(),
+): Promise<UserDTO | null> {
+  return jar.closed_by && !blockedUserIds.has(jar.closed_by) ? getUser(jar.closed_by) : null;
 }
 
 async function membersOf(jarId: JarId): Promise<MembershipRow[]> {
@@ -454,10 +602,13 @@ export async function listJarsForUser(userId: UserId): Promise<JarSummaryDTO[]> 
     [userId],
   );
   const rows = dbRows.map(parseJarRow);
+  const blockedUserIds = await blockedUserIdsFor(userId);
   return Promise.all(
     rows.map(async (j) => {
       const members = await membersOf(j.id);
-      const activeMembers = members.filter((member) => member.left_at == null);
+      const activeMembers = members.filter(
+        (member) => member.left_at == null && !blockedUserIds.has(member.user_id),
+      );
       const mine = members.find((m) => m.user_id === userId);
       return JarSummarySchema.parse({
         id: j.id,
@@ -471,7 +622,7 @@ export async function listJarsForUser(userId: UserId): Promise<JarSummaryDTO[]> 
         myDaysClean: daysClean(mine?.streak_start_at ?? null),
         myShareStreak: !!mine?.share_streak,
         closedAt: j.closed_at == null ? null : Number(j.closed_at),
-        closedBy: await closedByUser(j),
+        closedBy: await closedByUser(j, blockedUserIds),
       });
     }),
   );
@@ -480,9 +631,14 @@ export async function listJarsForUser(userId: UserId): Promise<JarSummaryDTO[]> 
 export async function getJarDetail(jarId: JarId, meId: UserId): Promise<JarDetailDTO | null> {
   const j = await jarRow(jarId);
   if (!j) return null;
+  const blockedUserIds = await blockedUserIdsFor(meId);
   const rawMembers = await membersOf(jarId);
   const members = (
-    await Promise.all(rawMembers.map((member) => serializeMember(member, meId)))
+    await Promise.all(
+      rawMembers
+        .filter((member) => !blockedUserIds.has(member.user_id))
+        .map((member) => serializeMember(member, meId)),
+    )
   ).sort((a, b) => b.tallyCents - a.tallyCents);
   return JarDetailSchema.parse({
     id: j.id,
@@ -493,13 +649,16 @@ export async function getJarDetail(jarId: JarId, meId: UserId): Promise<JarDetai
     inviteExpiresAt: j.invite_expires_at == null ? null : Number(j.invite_expires_at),
     jarTotalCents: await jarTotal(jarId),
     members,
-    activity: await activityForJar(jarId, 8),
+    activity: await activityForJar(jarId, meId, 8),
     closedAt: j.closed_at == null ? null : Number(j.closed_at),
-    closedBy: await closedByUser(j),
+    closedBy: await closedByUser(j, blockedUserIds),
   });
 }
 
-export async function getJarPreviewByCode(code: InviteCode): Promise<{
+export async function getJarPreviewByCode(
+  code: InviteCode,
+  viewerId: UserId,
+): Promise<{
   id: JarId;
   name: string;
   rule: string;
@@ -509,6 +668,7 @@ export async function getJarPreviewByCode(code: InviteCode): Promise<{
 } | null> {
   const j = await jarRowByCode(code);
   if (!j) return null;
+  if (await jarHasBlockedMember(pool, j.id, viewerId)) return null;
   const members = await activeMembersOf(j.id);
   const users = await Promise.all(
     members.map(async (member) =>
@@ -598,6 +758,8 @@ export async function joinJarByCode(
     // join; it can no longer invalidate the code and then have this join commit.
     const j = await jarRowByCode(code, db, true);
     if (!j) return null;
+    await lockJarParticipants(db, j.id, [userId]);
+    if (await jarHasBlockedMember(db, j.id, userId)) return null;
     const already = await isMemberIn(db, j.id, userId, true);
     const membership = await addMembership(j.id, userId, "member", db, !already);
     if (!already) {
@@ -660,6 +822,7 @@ export async function rotateInvite(
     if (!membership) return { status: "not_member" };
     if (membership.role !== "owner") return { status: "forbidden" };
     if (jar.closed_at != null) return { status: "jar_closed" };
+    await assertNoBlockedJarParticipant(db, jarId, userId);
     const invite = await freshInvite(db);
     await db.query(
       "UPDATE jars SET invite_code=$1, invite_expires_at=$2, invite_version_id=$3 WHERE id=$4 AND closed_at IS NULL",
@@ -721,13 +884,16 @@ export async function leaveJar(
 }
 
 export async function setShareStreak(jarId: JarId, userId: UserId, val: boolean): Promise<void> {
-  await assertJarOpen(jarId);
-  if (!(await isMember(jarId, userId))) throw new Error("not a jar member");
-  await pool.query("UPDATE memberships SET share_streak=$1 WHERE jar_id=$2 AND user_id=$3", [
-    val ? 1 : 0,
-    jarId,
-    userId,
-  ]);
+  await withTransaction(async (db) => {
+    await assertJarOpen(jarId, db, true);
+    await assertNoBlockedJarParticipant(db, jarId, userId);
+    if (!(await isMemberIn(db, jarId, userId, true))) throw new Error("not a jar member");
+    await db.query("UPDATE memberships SET share_streak=$1 WHERE jar_id=$2 AND user_id=$3", [
+      val ? 1 : 0,
+      jarId,
+      userId,
+    ]);
+  });
 }
 
 // ─────────────────────────── slips ───────────────────────────
@@ -761,6 +927,7 @@ async function logSlipInTransaction(
   },
 ): Promise<void> {
   await assertJarOpen(opts.jarId, db, true);
+  await assertNoBlockedJarParticipant(db, opts.jarId, opts.userId);
   if (!(await isMemberIn(db, opts.jarId, opts.userId, true))) {
     throw new Error("not a jar member");
   }
@@ -836,16 +1003,20 @@ export async function createReport(opts: {
   note?: string | null;
   anonymous: boolean;
   amountCents: number;
-  evidence: EvidenceImageInput[];
+  evidence: readonly SanitizedEvidenceImage[];
 }): Promise<ReportDTO> {
   const rid = id("rpt");
   await withTransaction(async (db, emit) => {
     await assertJarOpen(opts.jarId, db, true);
+    await lockUsers(db, [opts.accuserId, opts.accusedId]);
     if (
       !(await isMemberIn(db, opts.jarId, opts.accuserId, true)) ||
       !(await isMemberIn(db, opts.jarId, opts.accusedId, true))
     ) {
       throw new Error("not a jar member");
+    }
+    if (await hasBlockBetween(db, opts.accuserId, opts.accusedId)) {
+      throw new BlockedInteractionError();
     }
     await db.query(
       "INSERT INTO reports (id, jar_id, accuser_id, accused_id, note, is_anonymous, amount_cents, status, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
@@ -945,11 +1116,21 @@ async function serializeReport(reportId: ReportId): Promise<ReportDTO | null> {
     "SELECT id, kind, payload FROM report_evidence WHERE report_id=$1 ORDER BY created_at",
     [reportId],
   );
-  const evidence = evRows.map((e) => ({
-    id: EvidenceIdSchema.parse(e.id),
-    kind: "image" as const,
-    ...parseEvidenceImageJson(e.payload),
-  }));
+  const evidence = evRows.flatMap((e) => {
+    try {
+      return [
+        {
+          id: EvidenceIdSchema.parse(e.id),
+          kind: "image" as const,
+          ...parseEvidenceImageJson(e.payload),
+        },
+      ];
+    } catch {
+      // Historical JPEG/WebP rows and malformed pre-sanitizer payloads fail
+      // closed: keep the report usable, but never send the unsafe original.
+      return [];
+    }
+  });
   return ReportSchema.parse({
     id: r.id,
     jarId: r.jar_id,
@@ -971,6 +1152,11 @@ export async function pendingReportsForUser(userId: UserId): Promise<ReportDTO[]
      JOIN memberships m ON m.jar_id=r.jar_id AND m.user_id=r.accused_id
      JOIN jars j ON j.id=r.jar_id
      WHERE r.accused_id=$1 AND r.status='pending' AND m.left_at IS NULL AND j.closed_at IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM user_block block
+         WHERE (block.blocker_user_id=r.accuser_id AND block.blocked_user_id=r.accused_id)
+            OR (block.blocker_user_id=r.accused_id AND block.blocked_user_id=r.accuser_id)
+       )
      ORDER BY r.created_at DESC`,
     [userId],
   );
@@ -983,6 +1169,13 @@ export async function reportHistoryForUser(userId: UserId): Promise<ReportDTO[]>
     `SELECT r.id FROM reports r
      JOIN memberships m ON m.jar_id=r.jar_id
      WHERE m.user_id=$1 AND m.left_at IS NULL AND r.status<>'pending'
+       AND NOT EXISTS (
+         SELECT 1 FROM user_block block
+         WHERE (block.blocker_user_id=$1
+                AND block.blocked_user_id IN (r.accuser_id,r.accused_id))
+            OR (block.blocked_user_id=$1
+                AND block.blocker_user_id IN (r.accuser_id,r.accused_id))
+       )
      ORDER BY COALESCE(r.resolved_at, r.created_at) DESC`,
     [userId],
   );
@@ -995,6 +1188,12 @@ export async function reportHistoryForUser(userId: UserId): Promise<ReportDTO[]>
 export async function reportForUser(reportId: ReportId, userId: UserId): Promise<ReportDTO | null> {
   const report = await reportRow(reportId);
   if (!report || !(await isMember(report.jar_id, userId))) return null;
+  if (
+    (report.accuser_id !== userId && (await hasBlockBetween(pool, userId, report.accuser_id))) ||
+    (report.accused_id !== userId && (await hasBlockBetween(pool, userId, report.accused_id)))
+  ) {
+    return null;
+  }
   return serializeReport(reportId);
 }
 
@@ -1006,6 +1205,8 @@ export async function resolveReport(
   const resolved = await withTransaction(async (db, emit) => {
     const r = await reportRow(reportId, db, true);
     if (!r || r.accused_id !== userId || r.status !== "pending") return false;
+    await lockUsers(db, [r.accuser_id, r.accused_id]);
+    if (await hasBlockBetween(db, r.accuser_id, r.accused_id)) return false;
     await assertJarOpen(r.jar_id, db, true);
     if (!(await isMemberIn(db, r.jar_id, userId, true))) return false;
     if (action === "own") {
@@ -1129,10 +1330,19 @@ async function serializeActivity(a: ActivityRow): Promise<ActivityDTO> {
   });
 }
 
-async function activityForJar(jarId: JarId, limit = 50): Promise<ActivityDTO[]> {
+async function activityForJar(jarId: JarId, viewerId: UserId, limit = 50): Promise<ActivityDTO[]> {
   const { rows } = await pool.query<ActivityDbRow>(
-    "SELECT * FROM activity WHERE jar_id=$1 ORDER BY created_at DESC LIMIT $2",
-    [jarId, limit],
+    `SELECT event.* FROM activity event
+     WHERE event.jar_id=$1
+       AND NOT EXISTS (
+         SELECT 1 FROM user_block block
+         WHERE (block.blocker_user_id=$2
+                AND block.blocked_user_id IN (event.actor_id,event.target_id))
+            OR (block.blocked_user_id=$2
+                AND block.blocker_user_id IN (event.actor_id,event.target_id))
+       )
+     ORDER BY event.created_at DESC LIMIT $3`,
+    [jarId, viewerId, limit],
   );
   return Promise.all(rows.map(parseActivityRow).map(serializeActivity));
 }
@@ -1140,7 +1350,15 @@ async function activityForJar(jarId: JarId, limit = 50): Promise<ActivityDTO[]> 
 export async function activityForUser(userId: UserId, limit = 50): Promise<ActivityDTO[]> {
   const { rows } = await pool.query<ActivityDbRow>(
     `SELECT a.* FROM activity a JOIN memberships m ON m.jar_id=a.jar_id
-     WHERE m.user_id=$1 AND m.left_at IS NULL ORDER BY a.created_at DESC LIMIT $2`,
+     WHERE m.user_id=$1 AND m.left_at IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM user_block block
+         WHERE (block.blocker_user_id=$1
+                AND block.blocked_user_id IN (a.actor_id,a.target_id))
+            OR (block.blocked_user_id=$1
+                AND block.blocker_user_id IN (a.actor_id,a.target_id))
+       )
+     ORDER BY a.created_at DESC LIMIT $2`,
     [userId, limit],
   );
   return Promise.all(rows.map(parseActivityRow).map(serializeActivity));

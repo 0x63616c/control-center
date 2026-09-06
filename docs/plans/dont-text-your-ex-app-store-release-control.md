@@ -353,16 +353,22 @@ the data model/deletion/moderation inventory is final.
 
 ### P05 — UGC safety backend and moderation model — 8%
 
-- **Status:** `NOT STARTED`
+- **Status:** `IN PROGRESS — LOCAL IMPLEMENTATION/VERIFICATION`
 - **Dependencies:** P01
 - **Work:** separate abuse reports from gameplay reports; block/unblock model;
   blocked interaction semantics; objectionable-text filtering at all relevant
   server boundaries; moderation statuses/audit; layered rate limiting; safe
-  evidence handling and operator authorization. Add Cloudflare zone-level WAF
-  rate-limit rules scoped to `dont-text-your-ex.worldwidewebb.co/api/*`, with
-  stricter budgets for authentication, invite probing/joining, uploads, reports,
-  and other state-changing operations. Add corresponding API-side per-user and
-  trusted-client-IP limits so origin safety does not depend solely on Cloudflare.
+  evidence handling and operator authorization. Add a Cloudflare Worker route
+  scoped exactly to `dont-text-your-ex.worldwidewebb.co/api/*`, using separate
+  Rate Limiting API bindings for the broad API, authentication, invite probing/
+  joining, uploads/reports, and other state-changing operations. This deliberately
+  replaces the originally proposed zone-level WAF rules: the Free zone plan has
+  only one WAF rate-limit rule, while the product requires five independently
+  testable budgets. Add corresponding API-side per-user and trusted-client-IP
+  limits so origin safety does not depend solely on Cloudflare. Worker binding
+  errors fail closed; the origin layer remains authoritative if edge counters are
+  permissive/eventually consistent. Production deployment remains blocked on the
+  owner choosing Workers Paid or explicitly accepting the Free daily-quota risk.
 - **Operator plane:** implement P01’s explicit protected-operator strategy
   (private kubectl/runbook or authenticated admin surface), define operator
   identity/authorization, and prove ordinary users cannot list, read, or resolve
@@ -371,9 +377,12 @@ the data model/deletion/moderation inventory is final.
   response, and contact requirements without leaking gameplay reporter identity
   or moderation information.
 - **Evidence:** migrations; raw HTTP/real-Postgres authorization and privacy
-  matrix; filter corpus/boundaries; rate-limit/idempotency tests; Cloudflare
-  ruleset preview/live rule IDs; bounded 429 tests proving both edge and origin
-  enforcement without locking out ordinary app flows; audit records.
+  matrix; filter corpus/boundaries; rate-limit/idempotency tests; Wrangler dry-run,
+  immutable Worker version and exact live route/binding configuration; bounded
+  429 tests proving both edge and origin enforcement without locking out ordinary
+  app flows; audit records. Architecture sources: [Workers Rate Limiting API](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/),
+  [WAF plan availability](https://developers.cloudflare.com/waf/), and
+  [Workers limits](https://developers.cloudflare.com/workers/platform/limits/).
 - **Apple source:** https://developer.apple.com/app-store/review/guidelines/
 
 ### P06 — UGC safety UX, consent, and user control — 5%
@@ -464,8 +473,8 @@ the data model/deletion/moderation inventory is final.
 - **Integrated production additions:** prove P07 policy/support routes publicly;
   run P08’s production alert/queue/resolve/backup drill; verify moderation tables
   survive restore; prove the public hostname routes only the configured frontend
-  and `/api` services through outbound-only Cloudflare Tunnel; exercise each WAF
-  and API-side limiter with safe bounded probes; confirm unrelated
+  and `/api` services through outbound-only Cloudflare Tunnel; exercise each
+  Worker binding class and API-side limiter with safe bounded probes; confirm unrelated
   `worldwidewebb.co` hosts and legitimate app flows are unaffected; and remove
   synthetic data afterward.
 
@@ -716,6 +725,7 @@ the data model/deletion/moderation inventory is final.
 | Distribution method | DECIDED | Public/discoverable App Store distribution; disable School Manager reduced-price availability for V1 | 2026-08-22 |
 | Protected moderation operator plane | DECIDED | Coordinator decision after `/root/p01_operator_plane` audit: private typed `moderationctl` + committed runbook in the existing API pod; no operator HTTP route/UI for V1 | 2026-08-16 |
 | V1 moderation operator responsibility | DECIDED | Calum operates the typed runbook using the existing cluster-admin credential as the single V1 root of trust; no additional operator until a least-privilege plane exists | 2026-08-22 |
+| Cloudflare API abuse-control architecture | DECIDED — DEPLOYMENT PLAN OPEN | Exact `/api/*` Worker route with five Rate Limiting API bindings plus independent origin client/user limits. This replaces zone WAF rules because the Free zone permits only one such rule and cannot express the required five budgets. Edge binding errors fail closed; origin controls remain independent. Workers Paid is recommended because Free stops after 100,000 requests/day; enabling billing or accepting that availability risk still requires Calum | 2026-08-23 |
 | V1 localization | DECIDED | English (U.S.) only for V1 | 2026-08-22 |
 
 ## Evidence ledger
@@ -739,13 +749,19 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 | 2026-08-16 | P01/P03 | Temporal delivery reconciliation | PASS / OWNER CONFIRMATION OPEN | T-42 coordinator branch | [Temporal orchestration ADR](../adr/0014-dont-text-your-ex-temporal-orchestration.md) and [account-deletion data map](../../apps/dont-text-your-ex/docs/account-deletion-data-map.md) record the incompatible shared-jar and Apple-order proposals; W01/W02 may proceed, W10 destructive work may not | `/root/runtime_design`, `/root/outbox_workflows`, coordinator |
 | 2026-08-22 | P01 | Recommended release defaults and legal identity | OWNER APPROVAL RECORDED; ONE FIELD OPEN | `2940b01cd` baseline | Calum approved the recommended release defaults, identified the project as personal/non-commercial with no company, supplied the individual legal/privacy-owner name **Calum Peter Webb**, and approved **support@worldwidewebb.co** as the public support contact. The private forwarding destination is intentionally not recorded in the public repository. The deletion conflict is resolved in favor of active-member succession plus immediate local erasure with durable Apple retry. Only the Content Rights attestation remains open | Calum + coordinator; DSA wording checked against current Apple guidance |
 | 2026-08-23T16:48:33Z | P01/P02 | Final owner attestation and dependency closure | PASS — BOTH PACKETS PROVEN | `8b28d1ff2` branch baseline | Calum confirmed all app code, text, images, and other content are owned or appropriately licensed. This closes the final P01 field and satisfies P02's only dependency; P02's merged implementation, immutable CI, production deployment, public probes, and independently reviewed 20-image evidence set remain valid | Calum + coordinator |
+| 2026-08-23T20:12:41Z | P05 | Local UGC safety, moderation, abuse controls, and network hardening | LOCAL PROOF PASS; PR/CI/DEPLOY/PHYSICAL PENDING | local image `sha256:b19b8741…` | Fresh PostgreSQL migration chain through `0021`; API 215/215, frontend 48/48, infrastructure 445/445, Cloudflare 32/32, edge 13/13; exact five-binding Wrangler dry-run; Talos metal validation; all eight frozen-install manifests; production API image build. Independent combined review found no remaining P0/P1 defect. This does not claim live Cloudflare, Kubernetes policy enforcement, physical-device evidence, or P05 completion | Independent standards/spec reviewers + coordinator |
+| 2026-08-23T20:32:25Z | P03/P05 | Formal review closure and combined serial acceptance | LOCAL PROOF PASS; PR/CI/DEPLOY/PHYSICAL PENDING | P05 `7cecdaa15`; integration `116c7da21` | Formal Standards review reports no hard gap and formal Spec review reports no P0/P1 defect. On an isolated PostgreSQL instance, the combined branch passed API 277/277 and then Temporal worker 130/130 serially; frontend 49/49, focused infrastructure 12/12, Cloudflare 32/32, and edge Worker 13/13 also passed. The Worker dry-run exposed the exact five rate-limit bindings. The account-deletion suite proves full abuse-report and audit erasure when the deleted account is either participant while unrelated moderation data survives. No production mutation is claimed | Independent Standards, Spec, and combined-integration reviewers + coordinator |
 | 2026-08-23 | Operations | Temporal worker production repair | PASS | PR [#713](https://github.com/0x63616c/world-wide-webb/pull/713), `e710e1378` | Main CI [32598528985](https://github.com/0x63616c/world-wide-webb/actions/runs/32598528985) passed; live `dont-text-your-ex` deployment and pod were ready 1/1 with zero restarts after the runtime-image fix | Coordinator live cluster verification |
+| 2026-08-23 | P05 | Talos NetworkPolicy enforcement configuration | LOCAL CONFIG PASS; LIVE APPLY/PROBES PENDING | P05 working tree | Talos source now enables `cluster.network.cni.flannel.kubeNetworkPoliciesEnabled`; encrypted-secret render plus `talosctl validate --mode metal` passed. The live cluster had zero NetworkPolicy objects before this work. No Talos or Kubernetes production mutation has been made; approved maintenance-window apply, bootstrap-manifest sync, and allowed/denied live probes remain | Coordinator + infrastructure implementation reviewer |
 
 ## Blocker ledger
 
 | Opened | Packet | Blocker | Owner | Next action | Status |
 |---|---|---|---|---|---|
 | 2026-08-15 | P01 | Owner/legal/product decisions not yet recorded | Calum | None; all owner decisions are recorded | RESOLVED 2026-08-23 |
+| 2026-08-23 | P03 | Production Sign in with Apple revocation key is not provisioned | Calum + coordinator | Calum signs into Apple Developer and completes 2FA; coordinator prepares the key and asks immediately before final generation/download | OPEN; local P05 work continues |
+| 2026-08-23 | P05 | Cloudflare Free Workers quota permits an attacker-triggered edge outage even though the origin stays protected | Calum | Approve Workers Paid (recommended, approximately USD 5/month minimum) or explicitly accept the Free-tier availability risk before edge deployment | OPEN; implementation/testing continues |
+| 2026-08-23 | P05 | Talos Flannel does not yet enforce Kubernetes NetworkPolicy on the live cluster | Calum + coordinator | Approve a maintenance-window machine-config apply; synchronize bootstrap manifests and run live allowed/denied traffic probes | OPEN; config renders and validates locally |
 
 ## Notification ledger
 
@@ -757,15 +773,22 @@ evidence with stable URLs/IDs. “Observed” without a timestamp/source is inva
 | 2026-08-16T05:17:08Z | 5% | P02 implementation/review update; no earned-progress change | `KVx7azibmFNU` | Review findings were fixed; the four initially rejected captures were subsequently corrected, recaptured, and passed. P01 owner/legal decisions still gate P02 and earned progress. |
 | 2026-08-16T05:53:40Z | 5% | P02 merged, deployed publicly, and uploaded as interim Build 25; no earned-progress change | `oWCgVOw5YMLK` | P01 owner/legal decisions still gate P02. Account deletion, UGC safety, legal pages, final RC, physical QA, listing, submission, approval, and public App Store proof remain. |
 | 2026-08-23T16:48:33Z | 13% | P01 owner decisions and P02 supportive positioning proven | `cajXUWRyze2w` | P03 account deletion is in progress. UGC safety, edge/API abuse controls, legal pages, final RC, physical QA, listing, submission, approval, and public proof remain. |
+| 2026-08-23T19:37:33Z | 13% | P05 local hardening implementation in progress; no earned-progress change | `QJvQ1MyUqYkP` | Origin limiter, moderation intake, safe evidence pipeline, edge Worker, API NetworkPolicy, and Talos enforcement configuration are under combined verification. Apple Developer login/2FA, Cloudflare plan choice, and approved Talos rollout remain. |
+| 2026-08-23T20:12:41Z | 13% | P05 local implementation and independent closure review pass; no earned-progress change | `aFdvt3le35z8` | Fresh/full local gates pass with no remaining P0/P1 code defect. PR/CI, production deployment, live edge/origin probes, Talos policy enforcement, iPhone evidence QA, and P06 UX remain; owner blockers are unchanged. |
+| 2026-08-23T20:32:25Z | 13% | P05 formal review and combined P03/P05 serial acceptance pass; no earned-progress change | `dp5Hceaf1qVe` | PR/immutable CI, production deployment, live edge/origin probes, Talos enforcement, iPhone evidence QA, P06 UX, listing, submission, approval, and public release proof remain. Apple login/2FA, Cloudflare plan choice, and Talos maintenance approval are unchanged. |
 
 ## Current status
 
 - **Calculated progress:** 13% (`P00`, `P01`, and `P02` proven).
-- **Current packet:** P03.
-- **Current blockers:** none. The public support address is
-  `support@worldwidewebb.co`; its private forwarding destination is deliberately
-  excluded from repository evidence. Build 25 remains an interim TestFlight
-  build, not the final compliance release candidate.
-- **Next action:** implement and prove transactional account deletion, Apple
-  revocation retry, session invalidation, shared-jar succession, and fresh
-  re-registration semantics against real Postgres.
+- **Current packets:** P03 and P05 in parallel.
+- **Current blockers:** P03 production Apple revocation credentials require a
+  signed-in Apple Developer session and 2FA. P05 production edge deployment
+  requires the Workers Paid-versus-Free availability decision; live
+  NetworkPolicy enforcement requires an approved Talos maintenance-window
+  rollout. The public support address is `support@worldwidewebb.co`; its private
+  forwarding destination is deliberately excluded from repository evidence.
+  Build 25 remains an interim TestFlight build, not the final compliance release
+  candidate.
+- **Next action:** push/open the P05 pull request and prove immutable CI while
+  awaiting the P03 Apple login; do not merge or deploy either packet until its
+  production prerequisites are satisfied.

@@ -33,6 +33,7 @@ COPY packages/worker-runtime/package.json ./packages/worker-runtime/package.json
 # bun install needs their manifests in the build context (www-272b).
 COPY infra/package.json ./infra/package.json
 COPY infra/cloudflare/package.json ./infra/cloudflare/package.json
+COPY infra/cloudflare/workers/dont-text-your-ex-edge/package.json ./infra/cloudflare/workers/dont-text-your-ex-edge/package.json
 COPY infra/unifi/package.json ./infra/unifi/package.json
 
 # --ignore-scripts skips the lefthook prepare hook (needs git, not in alpine image).

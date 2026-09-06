@@ -113,7 +113,9 @@ test("invite preview errors are explicit, non-contradictory, and recoverable", a
   await expect(page.getByRole("alert")).toContainText("full six-letter");
 
   let previewAttempt = 0;
-  await page.route("**/api/jars/code/TRY123", async (route) => {
+  await page.route("**/api/jars/preview", async (route) => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().postDataJSON()).toEqual({ code: "TRY123" });
     previewAttempt += 1;
     if (previewAttempt === 1)
       return route.fulfill({
@@ -210,9 +212,14 @@ test("owner replaces a seven-day invite → old deep link stays revoked after re
   if (!after.inviteCode) throw new Error("owner jar invite missing after rotation");
   expect(after.inviteCode).not.toBe(before.inviteCode);
   await expect(page.getByText(after.inviteCode)).toBeVisible();
-  expect((await request.get(`/api/jars/code/${before.inviteCode}`, { headers })).status()).toBe(
-    404,
-  );
+  expect(
+    (
+      await request.post("/api/jars/preview", {
+        headers: { ...headers, "Content-Type": "application/json" },
+        data: { code: before.inviteCode },
+      })
+    ).status(),
+  ).toBe(404);
 
   await page.reload();
   await openJar(page, "Dry January (Failed)");
@@ -369,9 +376,14 @@ test("owner closes a jar → history survives → invite and mutations stay revo
   await page.reload();
   await openJar(page, "Dry January (Failed)");
   await expect(page.getByRole("status")).toContainText("history is read-only");
-  expect((await request.get(`/api/jars/code/${openDetail.inviteCode}`, { headers })).status()).toBe(
-    404,
-  );
+  expect(
+    (
+      await request.post("/api/jars/preview", {
+        headers: { ...headers, "Content-Type": "application/json" },
+        data: { code: openDetail.inviteCode },
+      })
+    ).status(),
+  ).toBe(404);
   const slip = await request.post(`/api/jars/${jar.id}/slips`, {
     headers: { ...headers, "Content-Type": "application/json" },
     data: { amountCents: 500 },

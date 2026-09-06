@@ -154,6 +154,11 @@
       // test/.
       "entry": ["test/**/*.test.ts"]
     },
+    "infra/cloudflare/workers/dont-text-your-ex-edge": {
+      // Wrangler's emergency rollback config loads this entrypoint directly;
+      // it is deliberately separate from the normal Worker module graph.
+      "entry": ["src/pass-through.ts"]
+    },
     "drizzle": {
       // load-secret.js is the drizzle image's `bun --preload` ENTRYPOINT.
       "entry": ["load-secret.js"]

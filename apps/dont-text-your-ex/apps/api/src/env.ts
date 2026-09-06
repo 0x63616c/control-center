@@ -16,6 +16,11 @@ const ENV = defineEnv({
   TEMPORAL_ADDRESS: str().optional(),
   PUSH_TOKEN_KEYRING_FILE: str().default("/run/secrets/PUSH_TOKEN_KEYRING"),
   PUSH_TOKEN_KEYRING: str().optional(),
+  MODERATION_NARRATIVE_KEYRING_FILE: str().default(
+    "/run/moderation-secrets/MODERATION_NARRATIVE_KEYRING",
+  ),
+  MODERATION_NARRATIVE_KEYRING: str().optional(),
+  KUBERNETES_SERVICE_HOST: str().optional(),
   TYE_RESET: str().optional(),
 });
 
@@ -54,6 +59,23 @@ export function pushTokenKeyringSource(): unknown {
   }
 }
 
+export function moderationNarrativeKeyringSource(): unknown {
+  try {
+    return JSON.parse(
+      ENV.MODERATION_NARRATIVE_KEYRING ??
+        readFileSync(ENV.MODERATION_NARRATIVE_KEYRING_FILE, "utf-8"),
+    );
+  } catch (error) {
+    if (ENV.APP_ENV !== "production") {
+      return { activeKeyId: "local", keys: { local: Buffer.alloc(32, 11).toString("base64") } };
+    }
+    throw new Error(
+      "Don't Text Your Ex: MODERATION_NARRATIVE_KEYRING_FILE must contain valid JSON",
+      { cause: error },
+    );
+  }
+}
+
 export function requireDatabaseUrl(): string {
   const url = buildDatabaseUrl();
   if (!url) {
@@ -67,6 +89,10 @@ export function requireDatabaseUrl(): string {
 
 export function isProduction(): boolean {
   return ENV.APP_ENV === "production";
+}
+
+export function isKubernetesRuntime(): boolean {
+  return ENV.KUBERNETES_SERVICE_HOST !== undefined;
 }
 
 export function shouldResetDatabase(): boolean {

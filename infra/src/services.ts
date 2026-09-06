@@ -12,7 +12,7 @@ import * as k8s from "@pulumi/kubernetes";
 import * as pulumi from "@pulumi/pulumi";
 import { controlCenterProductManifest, defineProduct, type ProductSlug } from "@www/platform";
 import { DEFAULT_METRICS_PORT } from "@www/platform/metrics/port";
-import type { InfraNamespaceName } from "./cluster.ts";
+import { CLOUDFLARED_WORKLOAD_NAME, type InfraNamespaceName } from "./cluster.ts";
 import type { WorkloadSpec } from "./component.ts";
 import { ExternalService, HostBackedService, Workload } from "./component.ts";
 import { DONT_TEXT_YOUR_EX_IMAGE_DIGEST_KEYS } from "./dont-text-your-ex.ts";
@@ -678,7 +678,7 @@ export function serviceSpecs(opts: ServiceSpecOptions): OwnedWorkloadSpec[] {
     {
       logicalName: "cloudflare-cloudflared",
       legacyLogicalName: "platform-cloudflared",
-      name: "cloudflared",
+      name: CLOUDFLARED_WORKLOAD_NAME,
       namespaceName: "cloudflare",
       image: "cloudflare/cloudflared:2025.10.1",
       replicas: cloudflaredReplicas, // HA (2) at cutover; 0 pre-cutover so it

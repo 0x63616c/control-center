@@ -58,16 +58,19 @@ describe("frontend response JSON boundary", () => {
   });
 
   it("exposes a typed retry delay only for invite rate limits", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        Response.json({ error: "invite_rate_limited", retryAfterSeconds: 47 }, { status: 429 }),
-      ),
+    const fetchMock = vi.fn(async () =>
+      Response.json({ error: "invite_rate_limited", retryAfterSeconds: 47 }, { status: 429 }),
     );
+    vi.stubGlobal("fetch", fetchMock);
 
     const error = await api.jarByCode("XEX24K").catch((caught: unknown) => caught);
     expect(inviteRetryAfterSeconds(error)).toBe(47);
     expect(inviteRetryAfterSeconds(new Error("network unavailable"))).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/jars/preview",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ code: "XEX24K" }) }),
+    );
+    expect(JSON.stringify(fetchMock.mock.calls)).not.toContain("/jars/code/XEX24K");
   });
 
   it("routes branded jar and report identifiers to their matching resources", async () => {

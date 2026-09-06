@@ -1,0 +1,19 @@
+{
+  "name": "@www/dont-text-your-ex-edge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check": "bun run test && bun run typecheck && wrangler deploy --dry-run",
+    "deploy": "wrangler deploy",
+    "upload:pass-through": "wrangler versions upload --config wrangler.pass-through.jsonc --message 'Emergency pass-through rollback candidate'",
+    "deploy:pass-through": "wrangler deploy --config wrangler.pass-through.jsonc"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.36.0"
+  }
+}

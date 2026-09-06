@@ -9,6 +9,7 @@ import * as k8s from "@pulumi/kubernetes";
 import type { ProductSlug } from "@www/platform";
 
 export const CLOUDFLARE_NAMESPACE = "cloudflare";
+export const CLOUDFLARED_WORKLOAD_NAME = "cloudflared";
 
 // "captive-portal" EXCLUDED (SDD track 0, Task 6): its namespace + CNPG
 // clusters + pg-backup CronJob are torn down here. Its @www/platform identity

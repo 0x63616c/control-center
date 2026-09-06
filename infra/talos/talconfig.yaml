@@ -120,6 +120,15 @@ patches:
     cluster:
       discovery: { enabled: false }
       allowSchedulingOnControlPlanes: true
+      network:
+        cni:
+          name: flannel
+          flannel:
+            # Talos 1.13 ships kube-network-policies behind this explicit
+            # switch. Without it, Kubernetes accepts NetworkPolicy objects but
+            # Flannel does not enforce them, which makes a successful apply a
+            # dangerously misleading security signal.
+            kubeNetworkPoliciesEnabled: true
   # Tailscale extension runtime config. Top-level document (ExtensionServiceConfig
   # is not a `machine:` sub-key) — do not nest this under the patch above. This
   # was previously live on the node but absent here: a full (non-patch)
