@@ -83,7 +83,7 @@ export const Timeline: Story = {
     await expect(canvas.getByRole("button", { name: "Log dose", exact: true })).toBeVisible();
     await expect(canvas.getByText("Estimated in your body now")).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "12 weeks each side", exact: true }));
-    await expect(canvas.getByRole("slider", { name: "Selected timeline date" })).toBeVisible();
+    await expect(canvas.getByRole("slider", { name: "Explore progress" })).toBeVisible();
     await userEvent.click(canvas.getByRole("button", { name: "4 weeks each side", exact: true }));
   },
 };

@@ -537,12 +537,9 @@ export function InjectionForm({
             </Field>
           </div>
         </details>
-        <div className="ij-dose-preview">
-          {number(units)} units{" "}
-          <span>
-            = {number(dose?.ml)} mL = {number(dose?.mg)} mg
-          </span>
-        </div>
+        <p className="ij-muted">
+          Equivalent to {number(dose?.ml)} mL · {number(dose?.mg)} mg
+        </p>
         {vial?.discardDate && (
           <p className="ij-muted">
             Vial discard / beyond-use date: {vial.discardDate}. Physical remaining volume is
@@ -556,7 +553,11 @@ export function InjectionForm({
           </Field>
         </details>
         <ErrorMessage error={error} />
-        <Button loading={save.isPending || remove.isPending} disabled={!vial}>
+        <Button
+          style={{ width: "auto", minWidth: 220 }}
+          loading={save.isPending || remove.isPending}
+          disabled={!vial}
+        >
           {old ? "Save changes" : `Save ${number(units)} units`}
         </Button>
         {old && (

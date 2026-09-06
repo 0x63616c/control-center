@@ -342,6 +342,23 @@ function InjectionPage() {
         <CourseForm defaults={data.settings} onDone={saved} />
       ) : (
         <>
+          {course ? (
+            <CoursePage
+              key={course.id}
+              logFirst={firstLog === course.id}
+              course={course}
+              defaults={data.settings}
+              onCourseSaved={saved}
+            />
+          ) : (
+            <QuickStart
+              defaults={data.settings}
+              onDone={(id) => {
+                setFirstLog(id);
+                saved(id);
+              }}
+            />
+          )}
           <details className="ij-more">
             <summary>Tracking settings & course history</summary>
             <label className="ij-field">
@@ -365,23 +382,6 @@ function InjectionPage() {
               New course
             </Button>
           </details>
-          {course ? (
-            <CoursePage
-              key={course.id}
-              logFirst={firstLog === course.id}
-              course={course}
-              defaults={data.settings}
-              onCourseSaved={saved}
-            />
-          ) : (
-            <QuickStart
-              defaults={data.settings}
-              onDone={(id) => {
-                setFirstLog(id);
-                saved(id);
-              }}
-            />
-          )}
           <details className="ij-more">
             <summary>Example schedules</summary>
             <div className="ij-history">

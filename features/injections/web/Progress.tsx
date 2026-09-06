@@ -183,7 +183,7 @@ export function ProgressGraph({
         ))}
       </svg>
       <Slider
-        label="Selected timeline date"
+        label="Explore progress"
         min={left}
         max={right}
         step={3600000}

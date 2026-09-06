@@ -686,7 +686,7 @@
   font-weight: 500;
 }
 .ij-big-number {
-  font: 500 58px var(--mono);
+  font: 500 58px var(--ui);
   letter-spacing: -4px;
   color: var(--acc);
 }
@@ -751,7 +751,8 @@
 }
 
 .ij-progress svg {
-  max-height: 430px;
+  max-width: 1000px;
+  margin: auto;
 }
 .ij-progress .ij-actions {
   margin: 0;
