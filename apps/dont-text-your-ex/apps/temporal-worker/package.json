@@ -20,7 +20,7 @@
   "devDependencies": {
     "@types/node": "^22.13.0",
     "@types/pg": "^8.11.10",
-    "@temporalio/testing": "1.21.1",
+    "@temporalio/testing": "1.23.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   }
