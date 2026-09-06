@@ -68,11 +68,6 @@
   font-weight: 550;
   letter-spacing: -0.05em;
 }
-.bh-header-note {
-  font-size: 15px;
-  color: #8a8d8c;
-  padding-top: 7px;
-}
 .bh-edition {
   margin-left: auto;
   font-size: 10px;
@@ -389,66 +384,107 @@
   grid-column: 5 / 10;
   grid-row: 2;
   padding: 25px;
+  background: linear-gradient(130deg, #343b37, #232a27);
+  border-color: #303733;
+  color: #f1f4ef;
 }
-.bh-sonos-wordmark {
-  font-size: 13px;
-  letter-spacing: 0.09em;
-  font-weight: 650;
-}
-.bh-source {
+.bh-group-status {
   display: flex;
   align-items: center;
-  gap: 15px;
+  gap: 7px;
+  font-size: 12px;
+  color: #b8c3ba;
+}
+.bh-group-status .bh-dot {
+  background: #b4cbaa;
+}
+.bh-sonos-sources {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 21px;
+}
+.bh-source-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: left;
+  gap: 0;
+  padding: 15px 17px;
+  min-height: 114px;
+  --tap-bg: #ffffff07;
+  border: 1px solid #ffffff13;
+  border-radius: 16px;
+}
+.bh-source-choice[aria-pressed="true"] {
+  --tap-bg: #edf2e9;
+  color: #2f3a31;
+  border-color: transparent;
+}
+.bh-source-choice-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 24px;
+  margin-bottom: 12px;
+}
+.bh-source-title {
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.035em;
+}
+.bh-source-caption {
+  font-size: 12px;
+  font-weight: 400;
+  color: #a9b6ad;
+  margin-top: 4px;
+}
+.bh-source-choice[aria-pressed="true"] .bh-source-caption {
+  color: #748170;
+}
+.bh-volume-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #bac5bd;
   margin-top: 20px;
 }
-.bh-source-art {
-  width: 62px;
-  height: 62px;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(140deg, #485154, #15191c);
-  color: #eef2ed;
-  border-radius: 15px;
-}
-.bh-source h3 {
-  font-size: 22px;
-  letter-spacing: -0.04em;
-  margin-bottom: 5px;
+.bh-volume-label > span {
+  font-variant-numeric: tabular-nums;
 }
 .bh-volume {
   display: flex;
   align-items: center;
-  gap: 13px;
-  margin: 18px 0;
-  color: #7a8282;
-}
-.bh-volume span {
-  font-size: 13px;
-  min-width: 34px;
-  text-align: right;
+  gap: 12px;
+  margin-top: 9px;
+  color: #b2bfb5;
 }
 .bh-volume input {
+  appearance: none;
   flex: 1;
   min-width: 0;
   height: 5px;
-  accent-color: #6e8482;
+  border-radius: 10px;
   cursor: pointer;
 }
-.bh-sonos-actions {
-  display: flex;
-  gap: 9px;
+.bh-volume input::-webkit-slider-thumb {
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #edf2e9;
+  box-shadow: 0 1px 4px #0003;
 }
-.bh-sonos-actions .bh-tap {
-  font-size: 12px;
-  flex: 1;
-  white-space: nowrap;
-  gap: 6px;
-  padding: 10px 9px;
-  --tap-bg: #f4f5f4;
-}
-.bh-sonos-actions .bh-tap[aria-pressed="true"] {
-  --tap-bg: #eaf0ed;
-  color: #5c7165;
+.bh-volume input::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border: 0;
+  border-radius: 50%;
+  background: #edf2e9;
 }
 .bh-weather {
   grid-column: 10 / 13;
@@ -580,4 +616,8 @@
 }
 .bh-forecast .bh-chart {
   margin-top: 22px;
+}
+
+.bh-weather h2 {
+  color: #59748a;
 }

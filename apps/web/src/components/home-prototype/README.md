@@ -8,6 +8,6 @@ The bedroom shortcut represents the strip and two bedside lamps specified by the
 
 Run from `apps/web`: `bun run storybook -- --port 16006 --no-open`.
 
-Open `/iframe.html?id=prototypes-bento-home--white&viewMode=story` at 1366 × 1024. The first rendered design is captured in `output/bento-home/soft-white.png` in this worktree.
+Open `/iframe.html?id=prototypes-bento-home--white&viewMode=story` at 1366 × 1024. The initial design is captured in `output/bento-home/soft-white.png`; the current revision is `output/bento-home/soft-white-v2.png`. Revision 2 simplifies tile titles, removes decorative taglines, and replaces the Sonos artwork and action row with two prominent source selectors on a charcoal surface. The outer grid spacing is preserved.
 
 Validation: web TypeScript check and Biome pass. Playwright verified exact screen dimensions, no document overflow, no clipped cards, no browser errors, independent lamp toggles, all-off, fan toggle, temperature increments, disabled setpoint controls while off, Auto range selection, Sonos grouping selection, and volume changes. Physical touch ergonomics and production integration remain outside this design prototype.

@@ -5,7 +5,6 @@
 import {
   ArrowDown,
   ArrowUp,
-  AudioLines,
   BedDouble,
   Check,
   CloudRain,
@@ -143,7 +142,7 @@ export function BentoHome() {
           <House size={23} strokeWidth={1.6} />
           <span>Home</span>
         </div>
-        <span className="bh-header-note">A little more at ease.</span>
+
         <span className="bh-edition">CONTROL PANEL</span>
       </header>
       <div className="bh-grid">
@@ -154,7 +153,7 @@ export function BentoHome() {
             <span>{clock.includes("AM") ? "AM" : "PM"}</span>
           </div>
           <div className="bh-clock-bottom">
-            <span className="bh-dot" /> Your everyday, at a glance.
+            <span className="bh-dot" /> Los Angeles · Pacific time
           </div>
         </section>
         <section className="bh-card bh-lamps">
@@ -217,7 +216,7 @@ export function BentoHome() {
         </section>
         <section className={`bh-card bh-fan ${fan ? "bh-fan-on" : ""}`}>
           <div className="bh-card-head">
-            <span className="bh-eyebrow">A little fresh air</span>
+            <h2>Fan</h2>
             <Switch
               on={fan}
               label="Fan"
@@ -229,7 +228,7 @@ export function BentoHome() {
           </div>
           <Fan className="bh-fan-art" strokeWidth={1.2} />
           <div className="bh-fan-label">
-            <h2>Fan</h2>
+            <span>Air circulation</span>
             <span>{fan ? "On" : "Off"}</span>
           </div>
         </section>
@@ -237,7 +236,7 @@ export function BentoHome() {
           <div className="bh-card-head">
             <div className="bh-heading">
               <Snowflake />
-              <h2>Air conditioning</h2>
+              <h2>Climate</h2>
             </div>
             <span className="bh-temp-unit">°F</span>
           </div>
@@ -292,7 +291,7 @@ export function BentoHome() {
             <span>
               {mode === "heat_cool"
                 ? `Adjust ${rangeSide === "low" ? "heating" : "cooling"} limit`
-                : "Make yourself comfortable"}
+                : "Target temperature"}
             </span>
             <Tap disabled={mode === "off"} onClick={() => step(1)} label="Increase temperature">
               <Plus size={26} />
@@ -327,32 +326,55 @@ export function BentoHome() {
         </section>
         <section className="bh-card bh-sonos">
           <div className="bh-card-head">
-            <div className="bh-heading">
-              <AudioLines />
-              <h2>Sound, everywhere</h2>
-            </div>
-            <span className="bh-sonos-wordmark">SONOS</span>
+            <h2>Sonos</h2>
+            <span className="bh-group-status">
+              <span className="bh-dot" />5 rooms together
+            </span>
           </div>
-          <div className="bh-source">
-            <div className="bh-source-art">
-              {source === "line-in" ? (
-                <AudioLines size={37} strokeWidth={1.3} />
-              ) : (
-                <Tv size={35} strokeWidth={1.3} />
-              )}
-            </div>
-            <div>
-              <h3>{source === "line-in" ? "Desk line-in" : "TV audio"}</h3>
-              <p>
-                {source === "line-in" ? "5 rooms grouped · Paused" : "All rooms grouped · Preview"}
-              </p>
-            </div>
+          <fieldset className="bh-sonos-sources" aria-label="Play across all rooms">
+            <Tap
+              className="bh-source-choice"
+              label="Join all to line-in"
+              selected={source === "line-in"}
+              onClick={() => {
+                setSource("line-in");
+                preview("All rooms joined to Desk line-in");
+              }}
+            >
+              <span className="bh-source-choice-top">
+                <Plug size={22} strokeWidth={1.5} />
+                {source === "line-in" && <Check size={16} />}
+              </span>
+              <span className="bh-source-title">Desk line-in</span>
+              <span className="bh-source-caption">
+                {source === "line-in" ? "All rooms · Paused" : "Join all rooms"}
+              </span>
+            </Tap>
+            <Tap
+              className="bh-source-choice"
+              label="Join all to TV"
+              selected={source === "tv"}
+              onClick={() => {
+                setSource("tv");
+                preview("All rooms joined to TV");
+              }}
+            >
+              <span className="bh-source-choice-top">
+                <Tv size={22} strokeWidth={1.5} />
+                {source === "tv" && <Check size={16} />}
+              </span>
+              <span className="bh-source-title">TV audio</span>
+              <span className="bh-source-caption">
+                {source === "tv" ? "All rooms · Preview" : "Join all rooms"}
+              </span>
+            </Tap>
+          </fieldset>
+          <div className="bh-volume-label">
+            <label htmlFor="bh-volume">Desk volume</label>
+            <span>{volume}%</span>
           </div>
           <div className="bh-volume">
-            <Volume2 size={21} />
-            <label className="bh-sr" htmlFor="bh-volume">
-              Desk volume
-            </label>
+            <Volume2 size={18} strokeWidth={1.5} />
             <input
               id="bh-volume"
               aria-label="Desk volume"
@@ -360,39 +382,19 @@ export function BentoHome() {
               min="0"
               max="100"
               value={volume}
+              style={{
+                background: `linear-gradient(to right, #d9e4da ${volume}%, #4a504d ${volume}%)`,
+              }}
               onChange={(e) => {
                 setVolume(Number(e.target.value));
                 preview(`Desk volume ${e.target.value}%`);
               }}
             />
-            <span>{volume}%</span>
-          </div>
-          <div className="bh-sonos-actions">
-            <Tap
-              selected={source === "line-in"}
-              onClick={() => {
-                setSource("line-in");
-                preview("All rooms joined to Desk line-in");
-              }}
-            >
-              <Plug size={17} />
-              Join all to line-in{source === "line-in" && <Check size={16} />}
-            </Tap>
-            <Tap
-              selected={source === "tv"}
-              onClick={() => {
-                setSource("tv");
-                preview("All rooms joined to TV");
-              }}
-            >
-              <Tv size={17} />
-              Join all to TV
-            </Tap>
           </div>
         </section>
         <section className="bh-card bh-weather">
           <div className="bh-card-head">
-            <span className="bh-eyebrow">Outside today</span>
+            <h2>Weather</h2>
             <CloudRain size={26} strokeWidth={1.5} />
           </div>
           <div className="bh-weather-temp">67°</div>
@@ -414,8 +416,8 @@ export function BentoHome() {
         <section className="bh-card bh-forecast">
           <div className="bh-card-head">
             <div>
-              <h2>The day ahead</h2>
-              <p>Temperature over the next 12 hours</p>
+              <h2>Hourly forecast</h2>
+              <p>The next 12 hours</p>
             </div>
             <span className="bh-forecast-unit">°F</span>
           </div>
@@ -469,7 +471,7 @@ export function BentoHome() {
       </div>
       <footer className="bh-footer">
         <span>
-          DESIGN STUDY <span className="bh-footer-separator">/</span> 01 — Soft white
+          DESIGN STUDY <span className="bh-footer-separator">/</span> 02 — Soft white
         </span>
         <span aria-live="polite">{notice}</span>
         <span>Preview controls only</span>
