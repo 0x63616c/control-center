@@ -2,8 +2,8 @@ import { z } from "zod";
 
 export const DAY = 86_400_000;
 export const LB_PER_KG = 2.2046226218;
-export const UNITS = ["units", "mg", "mL"] as const;
-export const RANGES = ["4W", "12W", "Course", "All"] as const;
+const UNITS = ["units", "mg", "mL"] as const;
+const RANGES = ["4W", "12W", "Course", "All"] as const;
 export const POSES = ["front", "side", "back", "custom"] as const;
 export const dateInput = z.iso.date();
 const timeInput = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
@@ -264,4 +264,22 @@ export function scenario(
           ]
         : DEFAULTS.stages,
   };
+}
+
+/** Forecasts use logged doses plus only future, not-yet-linked scheduled events. */
+export function projectedDoses(data: RecordSet, now: number) {
+  const actual = doses(data).filter((d) => Date.parse(d.at) <= now);
+  const future = plannedInjections(data.course).filter(
+    (p) =>
+      Date.parse(p.at) > now &&
+      !actual.some((d) => d.plannedAt && Date.parse(d.plannedAt) === Date.parse(p.at)),
+  );
+  return { actual, future, projected: [...actual, ...future] };
+}
+export function currentVial(data: RecordSet) {
+  const last = [...data.injections].sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).at(-1);
+  return (
+    data.vials.find((v) => !v.retired && v.id === last?.vialId) ??
+    data.vials.find((v) => !v.retired)
+  );
 }

@@ -1,5 +1,6 @@
 import { useId } from "react";
 import {
+  currentVial,
   DAY,
   dayAt,
   doses,
@@ -32,7 +33,7 @@ export function CourseHero({
       !actual.some((i) => i.plannedAt && Date.parse(i.plannedAt) === Date.parse(p.at)),
   );
   const last = actual.filter((i) => Date.parse(i.at) <= now).at(-1),
-    vial = data.vials.find((v) => !v.retired) ?? data.vials.at(-1);
+    vial = currentVial(data);
   const estimate = remaining(actual, now, c.halfLifeDays),
     used = vial ? usedVolume(vial, data.injections, now) : 0;
   const ratio = vial ? Math.max(0, 1 - used / vial.volume) : 0,

@@ -5,6 +5,8 @@ import {
   DAY,
   DEFAULTS,
   plannedInjections,
+  projectedDoses,
+  type RecordSet,
   remaining,
   scenario,
   usedVolume,
@@ -87,5 +89,55 @@ describe("injection accounting", () => {
     const c = scenario("2026", "2026-09-04", "America/Los_Angeles");
     expect(courseInput.safeParse({ ...c, stages: [c.stages[0], c.stages[0]] }).success).toBe(false);
     expect(courseInput.safeParse({ ...c, startDate: "2026-02-30" }).success).toBe(false);
+  });
+});
+
+describe("logged-history forecast", () => {
+  it("keeps missed plans out of history and adds only unlinked future plans", () => {
+    const course = {
+      ...scenario("2026", "2026-09-04", "UTC"),
+      id: "icr_test",
+      status: "active" as const,
+    };
+    const plans = plannedInjections(course);
+    const now = Date.parse("2026-09-12T00:00:00Z");
+    const data: RecordSet = {
+      course,
+      vials: [
+        {
+          id: "ivl_test",
+          courseId: course.id,
+          label: "Vial",
+          volume: 2,
+          concentration: 5,
+          syringeScale: 100,
+          receivedDate: null,
+          openedDate: null,
+          discardDate: null,
+          retired: false,
+        },
+      ],
+      injections: [
+        {
+          id: "inj_test",
+          courseId: course.id,
+          vialId: "ivl_test",
+          at: "2026-09-11T20:00:00Z",
+          units: 3,
+          plannedAt: plans[2]?.at ?? null,
+          notes: "",
+        },
+      ],
+      checkIns: [],
+      photos: [],
+    };
+    const result = projectedDoses(data, now);
+    expect(result.actual).toHaveLength(1);
+    expect(result.future).toHaveLength(9);
+    expect(result.future.every((p) => Date.parse(p.at) > now)).toBe(true);
+    expect(remaining(result.projected, now, 7)).toBeCloseTo(remaining(result.actual, now, 7) ?? 0);
+    expect(remaining(result.projected, now + 21 * DAY, 7)).toBeGreaterThan(
+      remaining(result.actual, now + 21 * DAY, 7) ?? 0,
+    );
   });
 });

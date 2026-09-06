@@ -4,6 +4,7 @@ import { Slider } from "@/components/ui/Slider";
 import {
   addDays,
   courseWeek,
+  currentVial,
   DAY,
   dayAt,
   doses,
@@ -91,7 +92,7 @@ export function Timeline({
   const minKg = Math.min(...visibleWeights.map((w) => w.kg)),
     maxKg = Math.max(...visibleWeights.map((w) => w.kg));
   const yWeight = (kg: number) => 446 - ((kg - minKg) / (maxKg - minKg || 1)) * 68;
-  const activeVial = data.vials.find((v) => !v.retired) ?? data.vials.at(-1);
+  const activeVial = currentVial(data);
   const vialRemaining = (at: number) =>
     activeVial
       ? Math.max(0, activeVial.volume - usedVolume(activeVial, data.injections, at)) /

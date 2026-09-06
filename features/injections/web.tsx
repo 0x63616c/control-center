@@ -3,14 +3,12 @@ import { useNow } from "@/lib/hooks";
 import { trpc } from "@/lib/trpc";
 import {
   addDays,
-  courseWeek,
   dayAt,
   doses,
   LB_PER_KG,
-  plannedInjections,
+  projectedDoses,
   type RecordSet,
   remaining,
-  usedVolume,
   weightStats,
   zonedTime,
 } from "./model";
@@ -25,43 +23,27 @@ export function InjectionTileView({
   now?: number;
   weight?: { kg: number; change: number };
 }) {
-  const c = data?.course,
-    actual = data ? doses(data) : [],
-    plan = c ? plannedInjections(c) : [],
-    today = c ? dayAt(now, c.timezone) : "";
-  const next = plan.find(
-    (p) =>
-      dayAt(p.at, c?.timezone ?? "UTC") >= today &&
-      !actual.some((i) => i.plannedAt && Date.parse(i.plannedAt) === Date.parse(p.at)),
-  );
-  const vial = data?.vials.find((v) => !v.retired),
-    last = actual.at(-1);
+  const c = data?.course;
+  const actual = data ? doses(data) : [];
+  const next = data ? projectedDoses(data, now).future[0] : undefined;
+  const last = actual.at(-1);
   return (
     <Tile padding={22}>
       <TileHeader icon="weight" title={c?.medication ?? "Injection tracker"} />
       {!data ? (
         <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
-          <strong style={{ fontSize: 24 }}>Your course, together.</strong>
+          <strong style={{ fontSize: 24 }}>Log your first dose</strong>
           <span style={{ color: "var(--ink-2)", fontSize: 16 }}>
-            Plan · injections · weight · progress
+            Estimated amount · weight progress
           </span>
-          <span style={{ color: "var(--acc)", fontSize: 16 }}>Open tracker</span>
+          <span style={{ color: "var(--acc)", fontSize: 16 }}>Tap to log a dose</span>
         </div>
       ) : (
         <div style={{ display: "grid", gap: 12, marginTop: 12, fontSize: 16 }}>
-          <span style={{ color: "var(--ink-2)" }}>
-            Week {courseWeek(data.course, now)} · {data.course.status}
-          </span>
-          <strong style={{ fontSize: 24, color: "var(--acc)" }}>
-            {next && dayAt(next.at, data.course.timezone) === today
-              ? "Dose planned today"
-              : next
-                ? `Next · ${dateLabel(next.at, data.course.timezone)}`
-                : "No upcoming plan"}
+          <span style={{ color: "var(--ink-2)" }}>Estimated in your body</span>
+          <strong style={{ fontSize: 36, color: "var(--acc)" }}>
+            {actual.length ? number(remaining(actual, now, data.course.halfLifeDays)) : "—"} mg
           </strong>
-          <span>
-            {next ? `${next.units} units · ${number(next.mg)} mg` : "Edit schedule in tracker"}
-          </span>
           <span>
             Last ·{" "}
             {last
@@ -69,13 +51,8 @@ export function InjectionTileView({
               : "not recorded"}
           </span>
           <span>
-            Estimated remaining · {number(remaining(actual, now, data.course.halfLifeDays))} mg
-          </span>
-          <span>
-            Vial ·{" "}
-            {vial
-              ? `${number((1 - usedVolume(vial, data.injections) / vial.volume) * 100, 0)}% remaining`
-              : "not selected"}
+            Next planned ·{" "}
+            {next ? `${next.units} units · ${dateLabel(next.at, data.course.timezone)}` : "none"}
           </span>
           <span>
             Weight ·{" "}
@@ -83,11 +60,7 @@ export function InjectionTileView({
               ? `${number(weight.kg * LB_PER_KG, 1)} lb · ${number(weight.change * LB_PER_KG, 1)} lb`
               : "no course reading"}
           </span>
-          <small style={{ color: "var(--ink-2)" }}>
-            {data.checkIns.some((e) => e.date === today)
-              ? "Today's check-in logged"
-              : "Check-in not logged today"}
-          </small>
+          <small style={{ color: "var(--acc)" }}>Tap to log a dose</small>
         </div>
       )}
     </Tile>

@@ -6,6 +6,7 @@ import {
   type CourseConfig,
   convert,
   courseInput,
+  currentVial,
   dayAt,
   plannedInjections,
   type RecordSet,
@@ -447,18 +448,13 @@ export function InjectionForm({
       !data.injections.some((i) => i.plannedAt && Date.parse(i.plannedAt) === Date.parse(p.at)),
   );
   const last = data.injections.at(-1);
-  const [vialId, setVialId] = useState(
-    old?.vialId ??
-      data.vials.find((v) => !v.retired && v.id === last?.vialId)?.id ??
-      data.vials.find((v) => !v.retired)?.id ??
-      "",
-  );
+  const [vialId, setVialId] = useState(old?.vialId ?? currentVial(data)?.id ?? "");
   const [units, setUnits] = useState(
     old?.units ?? todayPlan?.units ?? last?.units ?? data.course.stages[0]?.units ?? 3,
   );
   const [at, setAt] = useState(localInput(old?.at ?? new Date().toISOString()));
   const [notes, setNotes] = useState(old?.notes ?? "");
-  const [plannedAt, setPlannedAt] = useState(old?.plannedAt ?? todayPlan?.at ?? "");
+  const [plannedAt, setPlannedAt] = useState(old ? (old.plannedAt ?? "") : (todayPlan?.at ?? ""));
   const [error, setError] = useState<unknown>(null),
     [confirm, setConfirm] = useState(false);
   const save = trpc.injections.saveInjection.useMutation(),
@@ -466,7 +462,7 @@ export function InjectionForm({
   const vial = data.vials.find((v) => v.id === vialId),
     dose = vial ? convert(units, vial) : null;
   return (
-    <FormShell title={old ? "Edit actual injection" : "Log injection"} onClose={onDone}>
+    <FormShell title={old ? "Edit dose" : "Log dose"} onClose={onDone}>
       <form
         onSubmit={async (e) => {
           e.preventDefault();
@@ -493,7 +489,7 @@ export function InjectionForm({
             : "No plan is changed by this entry."}
         </p>
         <div className="ij-form-grid">
-          <Field label="Actual syringe units">
+          <Field label="Dose · units">
             <input
               required
               type="number"
@@ -503,53 +499,66 @@ export function InjectionForm({
               onChange={(e) => setUnits(Number(e.target.value))}
             />
           </Field>
-          <Field label={`Date & time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}`}>
-            <input
-              required
-              type="datetime-local"
-              value={at}
-              onChange={(e) => setAt(e.target.value)}
-            />
-          </Field>
-          <Field label="Vial">
-            <select required value={vialId} onChange={(e) => setVialId(e.target.value)}>
-              {data.vials.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.label} · {v.concentration} mg/mL{v.retired ? " · retired" : ""}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Link to a planned event (optional)">
-            <select value={plannedAt} onChange={(e) => setPlannedAt(e.target.value)}>
-              <option value="">Independent actual injection</option>
-              {plan.map((p) => (
-                <option key={p.at} value={p.at}>
-                  {new Date(p.at).toLocaleString("en-US", { timeZone: data.course.timezone })} ·{" "}
-                  {p.units} units
-                </option>
-              ))}
-            </select>
-          </Field>
         </div>
-        <div className="ij-dose-preview">
-          {number(units)} units{" "}
-          <span>
-            = {number(dose?.ml)} mL = {number(dose?.mg)} mg
-          </span>
-        </div>
+        <p className="ij-muted">
+          {old ? "Recorded" : "Logging"} at {new Date(at).toLocaleString()}. {vial?.label} ·{" "}
+          {vial?.concentration} mg/mL.
+        </p>
+        <details className="ij-more">
+          <summary>Change time or vial</summary>
+          <div className="ij-form-grid">
+            <Field label={`Date & time · ${Intl.DateTimeFormat().resolvedOptions().timeZone}`}>
+              <input
+                required
+                type="datetime-local"
+                value={at}
+                onChange={(e) => setAt(e.target.value)}
+              />
+            </Field>
+            <Field label="Vial">
+              <select required value={vialId} onChange={(e) => setVialId(e.target.value)}>
+                {data.vials.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label} · {v.concentration} mg/mL{v.retired ? " · retired" : ""}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Link to a planned event (optional)">
+              <select value={plannedAt} onChange={(e) => setPlannedAt(e.target.value)}>
+                <option value="">Independent actual injection</option>
+                {plan.map((p) => (
+                  <option key={p.at} value={p.at}>
+                    {new Date(p.at).toLocaleString("en-US", { timeZone: data.course.timezone })} ·{" "}
+                    {p.units} units
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        </details>
+        <p className="ij-muted">
+          Equivalent to {number(dose?.ml)} mL · {number(dose?.mg)} mg
+        </p>
         {vial?.discardDate && (
           <p className="ij-muted">
             Vial discard / beyond-use date: {vial.discardDate}. Physical remaining volume is
             separate.
           </p>
         )}
-        <Field label="Optional injection note">
-          <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </Field>
+        <details className="ij-more">
+          <summary>Add a note</summary>
+          <Field label="Optional injection note">
+            <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </Field>
+        </details>
         <ErrorMessage error={error} />
-        <Button loading={save.isPending || remove.isPending} disabled={!vial}>
-          Save actual injection
+        <Button
+          style={{ width: "auto", minWidth: 220 }}
+          loading={save.isPending || remove.isPending}
+          disabled={!vial}
+        >
+          {old ? "Save changes" : `Save ${number(units)} units`}
         </Button>
         {old && (
           <div className="ij-actions">
